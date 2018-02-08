@@ -40,7 +40,7 @@ lazy val buildSettings = Seq(
 )
 
 lazy val publishSettings = Seq(
-  homepage := Some(url("http://co.ntextu.al/")),
+  homepage := Some(url("http://gitub.com/propensive/efflorescence/")),
   licenses := Seq("Apache-2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0.txt")),
   autoAPIMappings := true,
   publishMavenStyle := true,
