@@ -5,10 +5,14 @@ import com.google.cloud.datastore._
 import util.Try
 import language.experimental.macros, language.existentials
 
+/** Efflorescence package object */
 object `package` {
+  /** provides a default instance of the GCP Datastore service */
   implicit val defaultDataStore: Service = Service(DatastoreOptions.getDefaultInstance.getService)
 
+  /** provides `save` and `delete` methods on case class instances */
   implicit class DataExt[T <: Product](value: T) {
+    /** saves the case class as a Datastore entity */
     def save()(implicit svc: Service, encoder: Encoder[T], id: Id[T], dao: Dao[T]): Ref[T] = {
       val DsType.DsObject(keyValues) = encoder.encode(value)
 
@@ -21,30 +25,47 @@ object `package` {
       }.getKey)
     }
 
+    /** deletes the Datastore entity with this ID */
     def delete()(implicit svc: Service, id: Id[T], dao: Dao[T]): Unit =
       svc.readWrite.delete(dao.keyFactory.newKey(id.key(value)))
   }
 }
 
+/** a reference to another case class instance stored in the GCP Datastore */
 case class Ref[T](ref: Key) {
+
+  /** resolves the reference and returns a case class instance */
   def apply()(implicit svc: Service, decoder: Decoder[T]): T = decoder.decode(svc.read.get(ref))
   override def toString: String = s"$Ref[${ref.getKind}]($key)"
+
+  /** a `String` version of the key contained by this reference */
   def key: String = ref.getNameOrId.toString
 }
 
+/** companion object for Geo instances */
 object Geo { def apply(latLng: LatLng): Geo = Geo(latLng.getLatitude, latLng.getLongitude) }
+
+/** a geographical position, with latitude and longitude */
 case class Geo(lat: Double, lng: Double) { def toLatLng = LatLng.of(lat, lng) }
 
+/** a representation of the GCP Datastore service */
 case class Service(readWrite: Datastore) { def read: DatastoreReader = readWrite }
+
+/** typeclass for encoding a value into a type which can be stored in the GCP Datastore */
 trait Encoder[T] { def encode(t: T): DsType }
+
+/** typeclass for decoding a value from the GCP Datastore into a Scala type */
 trait Decoder[T] { def decode(obj: BaseEntity[_], prefix: String = ""): T }
 
+/** typeclass for generating an ID field from a case class */
 trait Id[T] { def key(t: T): String }
 
+/** a data access object for a particular type */
 case class Dao[T](kind: String)(implicit svc: Service) {
 
   private[efflorescence] lazy val keyFactory = svc.readWrite.newKeyFactory().setKind(kind)
 
+  /** returns an iterator of all the values of this type stored in the GCP Platform */
   def all()(implicit decoder: Decoder[T]): Iterator[T] = {
     val query = Query.newEntityQueryBuilder().setKind(kind).build()
     val results: QueryResults[Entity] = svc.read.run(query)
@@ -56,9 +77,13 @@ case class Dao[T](kind: String)(implicit svc: Service) {
   }
 }
 
+/** generic type for Datastore datatypes */
 sealed trait DsType
+
+/** generic type for simple Datastore datatypes, which have no complex structure */
 class DsSimpleType(val set: (Entity.Builder, String) => Entity.Builder) extends DsType
 
+/** companion object for DsType */
 object DsType {
   final case class DsString(value: String) extends DsSimpleType(_.set(_, value))
   final case class DsLong(value: Long) extends DsSimpleType(_.set(_, value))
@@ -69,15 +94,22 @@ object DsType {
   final case class DsObject(keyValues: Map[String, DsSimpleType]) extends DsType
 }
 
+/** companion object for `Decoder`, including Magnolia generic derivation */
 object Decoder {
   type Typeclass[T] = Decoder[T]
+  
+  /** generates a new `Decoder` for the type `T` */
   implicit def gen[T]: Decoder[T] = macro Magnolia.gen[T]
 
+  /** combines `Decoder`s for each parameter of the case class `T` into a `Decoder` for `T` */
   def combine[T](caseClass: CaseClass[Decoder, T]): Decoder[T] = (obj, prefix) =>
     caseClass.construct { param =>
       param.typeclass.decode(obj, if (prefix.isEmpty) param.label else s"$prefix.${param.label}")
     }
 
+  /** tries `Decoder`s for each subtype of sealed trait `T` until one doesn`t throw an exception
+   *
+   *  This is a suboptimal implementation, and a better solution may be possible with more work. */
   def dispatch[T](st: SealedTrait[Decoder, T]): Decoder[T] = (obj, prefix) =>
     st.subtypes.view.map { sub => Try(sub.typeclass.decode(obj, prefix)) }.find(_.isSuccess).get.get
 
@@ -94,10 +126,14 @@ object Decoder {
   implicit def ref[T: Dao: Id]: Decoder[Ref[T]] = (obj, ref) => Ref[T](obj.getKey(ref))
 }
 
+/** companion object for `Encoder`, including Magnolia generic derivation */
 object Encoder {
   type Typeclass[T] = Encoder[T]
+  
+  /** generates a new `Encoder` for the type `T` */
   implicit def gen[T]: Encoder[T] = macro Magnolia.gen[T]
 
+  /** combines `Encoder`s for each parameter of the case class `T` into a `Encoder` for `T` */
   def combine[T](caseClass: CaseClass[Encoder, T]): Encoder[T] = value => DsType.DsObject {
     caseClass.parameters.flatMap { param =>
       param.typeclass.encode(param.dereference(value)) match {
@@ -107,6 +143,7 @@ object Encoder {
     }.toMap
   }
 
+  /** chooses the appropriate `Encoder` of a subtype of the sealed trait `T` based on its type */
   def dispatch[T](sealedTrait: SealedTrait[Encoder, T]): Encoder[T] =
     value => sealedTrait.dispatch(value) { st => st.typeclass.encode(st.cast(value)) }
 
@@ -123,11 +160,25 @@ object Encoder {
   implicit def ref[T]: Encoder[Ref[T]] = DsType.DsKey(_)
 }
 
+/** companion object for `Dao`, including Magnolia generic derivation */
 object Dao extends Dao_1 {
   type Typeclass[T] = Dao[T]
+  
+  /** constructs a new `Dao` instance for this datatype */
   implicit def apply[T <: Product]: Dao[T] = macro Magnolia.gen[T]
+
+  /** generically constructs a new `Dao` instance, simply using the type's name */
   def combine[T: Decoder](caseClass: CaseClass[Dao, T]): Dao[T] = Dao(caseClass.typeName)
+
+  /** this method should not be implemented, but due to a bug in the current version of Magnolia,
+   *  it is required. */
   def dispatch[T](sealedTrait: SealedTrait[Dao, T]): Dao[T] = ???
 }
 
-trait Dao_1 { implicit def parameters[T]: Dao[T] = Dao("") }
+/** low-priority implicits for the `Dao` companion object */
+trait Dao_1 {
+  /** This implicit exists as a hack to provide "dummy" Dao instances for the parameters of case
+   *  classes, without which derivation would fail. This should be unnecessary in later versions of
+   *  Magnolia. */
+  implicit def parameters[T]: Dao[T] = Dao("")
+}
