@@ -20,7 +20,7 @@ lazy val buildSettings = Seq(
   organization := "com.propensive",
   scalaVersion := "2.12.4",
   name := "efflorescence",
-  version := "1.0.1",
+  version := "0.1.0",
   scalacOptions ++= Seq(
     "-deprecation",
     "-feature",
