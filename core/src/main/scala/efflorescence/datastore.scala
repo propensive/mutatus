@@ -1,9 +1,11 @@
 package efflorescence
 
 import magnolia._
+import adversaria._
 import com.google.cloud.datastore._
 import util.Try
 import language.experimental.macros, language.existentials
+import annotation.StaticAnnotation
 
 /** Efflorescence package object */
 object `package` {
@@ -13,7 +15,7 @@ object `package` {
   /** provides `save` and `delete` methods on case class instances */
   implicit class DataExt[T <: Product](value: T) {
     /** saves the case class as a Datastore entity */
-    def save()(implicit svc: Service, encoder: Encoder[T], id: Id[T], dao: Dao[T]): Ref[T] = {
+    def save()(implicit svc: Service, encoder: Encoder[T], id: IdField[T], dao: Dao[T]): Ref[T] = {
       val DsType.DsObject(keyValues) = encoder.encode(value)
 
       new Ref[T](svc.readWrite.put {
@@ -26,10 +28,12 @@ object `package` {
     }
 
     /** deletes the Datastore entity with this ID */
-    def delete()(implicit svc: Service, id: Id[T], dao: Dao[T]): Unit =
+    def delete()(implicit svc: Service, id: IdField[T], dao: Dao[T]): Unit =
       svc.readWrite.delete(dao.keyFactory.newKey(id.key(value)))
   }
 }
+
+final class id() extends StaticAnnotation
 
 /** a reference to another case class instance stored in the GCP Datastore */
 case class Ref[T](ref: Key) {
@@ -58,7 +62,12 @@ trait Encoder[T] { def encode(t: T): DsType }
 trait Decoder[T] { def decode(obj: BaseEntity[_], prefix: String = ""): T }
 
 /** typeclass for generating an ID field from a case class */
-trait Id[T] { def key(t: T): String }
+trait IdField[T] { def key(t: T): String }
+
+object IdField {
+  implicit def annotationId[T](implicit ann: AnnotatedParam[id, T]): IdField[T] =
+    new IdField[T] { def key(t: T): String = ann.get(t).toString }
+}
 
 /** a data access object for a particular type */
 case class Dao[T](kind: String)(implicit svc: Service) {
@@ -123,7 +132,7 @@ object Decoder {
   implicit val double: Decoder[Double] = _.getDouble(_)
   implicit val float: Decoder[Float] = _.getDouble(_).toFloat
   implicit val geo: Decoder[Geo] = (obj, name) => Geo(obj.getLatLng(name))
-  implicit def ref[T: Dao: Id]: Decoder[Ref[T]] = (obj, ref) => Ref[T](obj.getKey(ref))
+  implicit def ref[T: Dao: IdField]: Decoder[Ref[T]] = (obj, ref) => Ref[T](obj.getKey(ref))
 }
 
 /** companion object for `Encoder`, including Magnolia generic derivation */
