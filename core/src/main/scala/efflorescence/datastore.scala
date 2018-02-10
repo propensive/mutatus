@@ -65,7 +65,7 @@ trait Decoder[T] { def decode(obj: BaseEntity[_], prefix: String = ""): T }
 trait IdField[T] { def key(t: T): String }
 
 object IdField {
-  implicit def annotationId[T](implicit ann: AnnotatedParam[id, T]): IdField[T] =
+  implicit def annotationId[T](implicit ann: FindMetadata[id, T]): IdField[T] =
     new IdField[T] { def key(t: T): String = ann.get(t).toString }
 }
 
@@ -76,7 +76,7 @@ case class Dao[T](kind: String)(implicit svc: Service) {
 
   /** returns an iterator of all the values of this type stored in the GCP Platform */
   def all()(implicit decoder: Decoder[T]): Iterator[T] = {
-    val query = Query.newEntityQueryBuilder().setKind(kind).build()
+    val query: EntityQuery = Query.newEntityQueryBuilder().setKind(kind).build()
     val results: QueryResults[Entity] = svc.read.run(query)
 
     new Iterator[Entity] {
@@ -169,25 +169,6 @@ object Encoder {
   implicit def ref[T]: Encoder[Ref[T]] = DsType.DsKey(_)
 }
 
-/** companion object for `Dao`, including Magnolia generic derivation */
-object Dao extends Dao_1 {
-  type Typeclass[T] = Dao[T]
-  
-  /** constructs a new `Dao` instance for this datatype */
-  implicit def apply[T <: Product]: Dao[T] = macro Magnolia.gen[T]
-
-  /** generically constructs a new `Dao` instance, simply using the type's name */
-  def combine[T: Decoder](caseClass: CaseClass[Dao, T]): Dao[T] = Dao(caseClass.typeName)
-
-  /** this method should not be implemented, but due to a bug in the current version of Magnolia,
-   *  it is required. */
-  def dispatch[T](sealedTrait: SealedTrait[Dao, T]): Dao[T] = ???
-}
-
-/** low-priority implicits for the `Dao` companion object */
-trait Dao_1 {
-  /** This implicit exists as a hack to provide "dummy" Dao instances for the parameters of case
-   *  classes, without which derivation would fail. This should be unnecessary in later versions of
-   *  Magnolia. */
-  implicit def parameters[T]: Dao[T] = Dao("")
+object Dao {
+  implicit def apply[T](implicit metadata: TypeMetadata[T]): Dao[T] = Dao(metadata.typeName)
 }
