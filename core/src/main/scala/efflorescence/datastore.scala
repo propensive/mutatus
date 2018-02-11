@@ -19,11 +19,9 @@ object `package` {
       val DsType.DsObject(keyValues) = encoder.encode(value)
 
       new Ref[T](svc.readWrite.put {
-        keyValues
-          .foldLeft(Entity.newBuilder(dao.keyFactory.newKey(id.key(value)))) {
-            case (entity, (k, dsType: DsSimpleType)) => dsType.set(entity, k)
-          }
-          .build()
+        keyValues.foldLeft(Entity.newBuilder(dao.keyFactory.newKey(id.key(value)))) {
+          case (entity, (k, dsType: DsSimpleType)) => dsType.set(entity, k)
+        }.build()
       }.getKey)
     }
 
@@ -44,6 +42,14 @@ case class Ref[T](ref: Key) {
 
   /** a `String` version of the key contained by this reference */
   def key: String = ref.getNameOrId.toString
+}
+
+/** companion object for `Namespace`, providing a default namespace */
+object Namespace { implicit val defaultNamespace: Namespace = Namespace("") }
+
+/** a GCP namespace */
+case class Namespace(name: String) {
+  def option: Option[String] = if(name.isEmpty) None else Some(name)
 }
 
 /** companion object for Geo instances */
@@ -70,13 +76,17 @@ object IdField {
 }
 
 /** a data access object for a particular type */
-case class Dao[T](kind: String)(implicit svc: Service) {
+case class Dao[T](kind: String)(implicit svc: Service, namespace: Namespace) {
 
-  private[efflorescence] lazy val keyFactory = svc.readWrite.newKeyFactory().setKind(kind)
+  private[efflorescence] lazy val keyFactory = {
+    val baseFactory = svc.readWrite.newKeyFactory().setKind(kind)
+    namespace.option.foldLeft(baseFactory)(_.setNamespace(_))
+  }
 
   /** returns an iterator of all the values of this type stored in the GCP Platform */
   def all()(implicit decoder: Decoder[T]): Iterator[T] = {
-    val query: EntityQuery = Query.newEntityQueryBuilder().setKind(kind).build()
+    val baseQueryBuilder = Query.newEntityQueryBuilder().setKind(kind)
+    val query: EntityQuery = namespace.option.foldLeft(baseQueryBuilder)(_.setNamespace(_)).build()
     val results: QueryResults[Entity] = svc.read.run(query)
 
     new Iterator[Entity] {
@@ -169,6 +179,8 @@ object Encoder {
   implicit def ref[T]: Encoder[Ref[T]] = DsType.DsKey(_)
 }
 
+/** companion object for data access objects */
 object Dao {
-  implicit def apply[T](implicit metadata: TypeMetadata[T]): Dao[T] = Dao(metadata.typeName)
+  implicit def apply[T](implicit metadata: TypeMetadata[T], namespace: Namespace): Dao[T] =
+    Dao(metadata.typeName)
 }
