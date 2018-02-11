@@ -1,9 +1,11 @@
 package efflorescence
 
 import magnolia._
+import adversaria._
 import com.google.cloud.datastore._
 import util.Try
 import language.experimental.macros, language.existentials
+import annotation.StaticAnnotation
 
 /** Efflorescence package object */
 object `package` {
@@ -13,23 +15,23 @@ object `package` {
   /** provides `save` and `delete` methods on case class instances */
   implicit class DataExt[T <: Product](value: T) {
     /** saves the case class as a Datastore entity */
-    def save()(implicit svc: Service, encoder: Encoder[T], id: Id[T], dao: Dao[T]): Ref[T] = {
+    def save()(implicit svc: Service, encoder: Encoder[T], id: IdField[T], dao: Dao[T]): Ref[T] = {
       val DsType.DsObject(keyValues) = encoder.encode(value)
 
       new Ref[T](svc.readWrite.put {
-        keyValues
-          .foldLeft(Entity.newBuilder(dao.keyFactory.newKey(id.key(value)))) {
-            case (entity, (k, dsType: DsSimpleType)) => dsType.set(entity, k)
-          }
-          .build()
+        keyValues.foldLeft(Entity.newBuilder(dao.keyFactory.newKey(id.key(value)))) {
+          case (entity, (k, dsType: DsSimpleType)) => dsType.set(entity, k)
+        }.build()
       }.getKey)
     }
 
     /** deletes the Datastore entity with this ID */
-    def delete()(implicit svc: Service, id: Id[T], dao: Dao[T]): Unit =
+    def delete()(implicit svc: Service, id: IdField[T], dao: Dao[T]): Unit =
       svc.readWrite.delete(dao.keyFactory.newKey(id.key(value)))
   }
 }
+
+final class id() extends StaticAnnotation
 
 /** a reference to another case class instance stored in the GCP Datastore */
 case class Ref[T](ref: Key) {
@@ -40,6 +42,14 @@ case class Ref[T](ref: Key) {
 
   /** a `String` version of the key contained by this reference */
   def key: String = ref.getNameOrId.toString
+}
+
+/** companion object for `Namespace`, providing a default namespace */
+object Namespace { implicit val defaultNamespace: Namespace = Namespace("") }
+
+/** a GCP namespace */
+case class Namespace(name: String) {
+  def option: Option[String] = if(name.isEmpty) None else Some(name)
 }
 
 /** companion object for Geo instances */
@@ -58,16 +68,25 @@ trait Encoder[T] { def encode(t: T): DsType }
 trait Decoder[T] { def decode(obj: BaseEntity[_], prefix: String = ""): T }
 
 /** typeclass for generating an ID field from a case class */
-trait Id[T] { def key(t: T): String }
+trait IdField[T] { def key(t: T): String }
+
+object IdField {
+  implicit def annotationId[T](implicit ann: FindMetadata[id, T]): IdField[T] =
+    new IdField[T] { def key(t: T): String = ann.get(t).toString }
+}
 
 /** a data access object for a particular type */
-case class Dao[T](kind: String)(implicit svc: Service) {
+case class Dao[T](kind: String)(implicit svc: Service, namespace: Namespace) {
 
-  private[efflorescence] lazy val keyFactory = svc.readWrite.newKeyFactory().setKind(kind)
+  private[efflorescence] lazy val keyFactory = {
+    val baseFactory = svc.readWrite.newKeyFactory().setKind(kind)
+    namespace.option.foldLeft(baseFactory)(_.setNamespace(_))
+  }
 
   /** returns an iterator of all the values of this type stored in the GCP Platform */
   def all()(implicit decoder: Decoder[T]): Iterator[T] = {
-    val query = Query.newEntityQueryBuilder().setKind(kind).build()
+    val baseQueryBuilder = Query.newEntityQueryBuilder().setKind(kind)
+    val query: EntityQuery = namespace.option.foldLeft(baseQueryBuilder)(_.setNamespace(_)).build()
     val results: QueryResults[Entity] = svc.read.run(query)
 
     new Iterator[Entity] {
@@ -123,7 +142,7 @@ object Decoder {
   implicit val double: Decoder[Double] = _.getDouble(_)
   implicit val float: Decoder[Float] = _.getDouble(_).toFloat
   implicit val geo: Decoder[Geo] = (obj, name) => Geo(obj.getLatLng(name))
-  implicit def ref[T: Dao: Id]: Decoder[Ref[T]] = (obj, ref) => Ref[T](obj.getKey(ref))
+  implicit def ref[T: Dao: IdField]: Decoder[Ref[T]] = (obj, ref) => Ref[T](obj.getKey(ref))
 }
 
 /** companion object for `Encoder`, including Magnolia generic derivation */
@@ -160,25 +179,8 @@ object Encoder {
   implicit def ref[T]: Encoder[Ref[T]] = DsType.DsKey(_)
 }
 
-/** companion object for `Dao`, including Magnolia generic derivation */
-object Dao extends Dao_1 {
-  type Typeclass[T] = Dao[T]
-  
-  /** constructs a new `Dao` instance for this datatype */
-  implicit def apply[T <: Product]: Dao[T] = macro Magnolia.gen[T]
-
-  /** generically constructs a new `Dao` instance, simply using the type's name */
-  def combine[T: Decoder](caseClass: CaseClass[Dao, T]): Dao[T] = Dao(caseClass.typeName)
-
-  /** this method should not be implemented, but due to a bug in the current version of Magnolia,
-   *  it is required. */
-  def dispatch[T](sealedTrait: SealedTrait[Dao, T]): Dao[T] = ???
-}
-
-/** low-priority implicits for the `Dao` companion object */
-trait Dao_1 {
-  /** This implicit exists as a hack to provide "dummy" Dao instances for the parameters of case
-   *  classes, without which derivation would fail. This should be unnecessary in later versions of
-   *  Magnolia. */
-  implicit def parameters[T]: Dao[T] = Dao("")
+/** companion object for data access objects */
+object Dao {
+  implicit def apply[T](implicit metadata: TypeMetadata[T], namespace: Namespace): Dao[T] =
+    Dao(metadata.typeName)
 }
