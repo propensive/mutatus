@@ -18,8 +18,9 @@ import magnolia._
 import adversaria._
 import com.google.cloud.datastore._
 import util.Try
-import language.experimental.macros, language.existentials
+import language.experimental.macros, language.existentials, language.higherKinds
 import annotation.StaticAnnotation
+import collection.generic.CanBuildFrom
 
 /** Efflorescence package object */
 object `package` {
@@ -158,11 +159,12 @@ object Decoder {
   implicit def optional[T: Decoder]: Decoder[Option[T]] =
     (obj, key) => if(obj.contains(key)) Some(implicitly[Decoder[T]].decode(obj)) else None
 
-  implicit def list[T: Decoder]: Decoder[List[T]] = new Decoder[List[T]] {
-    def decode(obj: BaseEntity[_], prefix: String): List[T] = {
+  implicit def collection[Coll[_], T: Decoder](implicit cbf: CanBuildFrom[Nothing, T, Coll[T]]):
+      Decoder[Coll[T]] = new Decoder[Coll[T]] {
+    def decode(obj: BaseEntity[_], prefix: String): Coll[T] = {
       Stream.from(0).map { idx =>
         Try(implicitly[Decoder[T]].decode(obj, s"$prefix.$idx"))
-      }.takeWhile(_.isSuccess).map(_.get).to[List]
+      }.takeWhile(_.isSuccess).map(_.get).to[Coll]
     }
   }
 }
@@ -204,8 +206,8 @@ object Encoder {
     case (k, Some(value)) => implicitly[Encoder[T]].encode(k, value)
   }
 
-  implicit def list[T: Encoder]: Encoder[List[T]] = (prefix, list) =>
-    list.zipWithIndex.flatMap { case (t, idx) =>
+  implicit def collection[Coll[T] <: Traversable[T], T: Encoder]: Encoder[Coll[T]] = (prefix, coll) =>
+    coll.to[List].zipWithIndex.flatMap { case (t, idx) =>
       implicitly[Encoder[T]].encode(if(prefix.isEmpty) s"$idx" else s"$prefix.$idx", t)
     }
 }
