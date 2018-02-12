@@ -18,8 +18,9 @@ import magnolia._
 import adversaria._
 import com.google.cloud.datastore._
 import util.Try
-import language.experimental.macros, language.existentials
+import language.experimental.macros, language.existentials, language.higherKinds
 import annotation.StaticAnnotation
+import collection.generic.CanBuildFrom
 
 /** Efflorescence package object */
 object `package` {
@@ -30,11 +31,11 @@ object `package` {
   implicit class DataExt[T <: Product](value: T) {
     /** saves the case class as a Datastore entity */
     def save()(implicit svc: Service, encoder: Encoder[T], id: IdField[T], dao: Dao[T]): Ref[T] = {
-      val DsType.DsObject(keyValues) = encoder.encode(value)
+      val keyValues = encoder.encode("", value)
 
       new Ref[T](svc.readWrite.put {
         keyValues.foldLeft(Entity.newBuilder(dao.keyFactory.newKey(id.key(value)))) {
-          case (entity, (k, dsType: DsSimpleType)) => dsType.set(entity, k)
+          case (entity, (key, dsType: DsType)) => dsType.set(entity, key)
         }.build()
       }.getKey)
     }
@@ -43,6 +44,9 @@ object `package` {
     def delete()(implicit svc: Service, id: IdField[T], dao: Dao[T]): Unit =
       svc.readWrite.delete(dao.keyFactory.newKey(id.key(value)))
   }
+
+  private[efflorescence] def ifEmpty[T](str: String, empty: T, nonEmpty: String => T): T =
+    if(str.isEmpty) empty else nonEmpty(str)
 }
 
 final class id() extends StaticAnnotation
@@ -63,7 +67,7 @@ object Namespace { implicit val defaultNamespace: Namespace = Namespace("") }
 
 /** a GCP namespace */
 case class Namespace(name: String) {
-  def option: Option[String] = if(name.isEmpty) None else Some(name)
+  def option: Option[String] = ifEmpty(name, None, Some(_))
 }
 
 /** companion object for Geo instances */
@@ -76,7 +80,7 @@ case class Geo(lat: Double, lng: Double) { def toLatLng = LatLng.of(lat, lng) }
 case class Service(readWrite: Datastore) { def read: DatastoreReader = readWrite }
 
 /** typeclass for encoding a value into a type which can be stored in the GCP Datastore */
-trait Encoder[T] { def encode(t: T): DsType }
+trait Encoder[T] { def encode(key: String, value: T): List[(String, DsType)] }
 
 /** typeclass for decoding a value from the GCP Datastore into a Scala type */
 trait Decoder[T] { def decode(obj: BaseEntity[_], prefix: String = ""): T }
@@ -108,36 +112,33 @@ case class Dao[T](kind: String)(implicit svc: Service, namespace: Namespace) {
       def hasNext: Boolean = results.hasNext
     }.map(decoder.decode(_))
   }
+
+  def unapply(id: String)(implicit decoder: Decoder[T]): Option[T] =
+    Try(decoder.decode(svc.read.get(keyFactory.newKey(id)))).toOption
 }
 
 /** generic type for Datastore datatypes */
-sealed trait DsType
-
-/** generic type for simple Datastore datatypes, which have no complex structure */
-class DsSimpleType(val set: (Entity.Builder, String) => Entity.Builder) extends DsType
+class DsType(val set: (Entity.Builder, String) => Entity.Builder)
 
 /** companion object for DsType */
 object DsType {
-  final case class DsString(value: String) extends DsSimpleType(_.set(_, value))
-  final case class DsLong(value: Long) extends DsSimpleType(_.set(_, value))
-  final case class DsBoolean(value: Boolean) extends DsSimpleType(_.set(_, value))
-  final case class DsDouble(value: Double) extends DsSimpleType(_.set(_, value))
-  final case class DsKey(value: Ref[_]) extends DsSimpleType(_.set(_, value.ref))
-  final case class DsLatLng(value: Geo) extends DsSimpleType(_.set(_, value.toLatLng))
-  final case class DsObject(keyValues: Map[String, DsSimpleType]) extends DsType
+  final case class DsString(value: String) extends DsType(_.set(_, value))
+  final case class DsLong(value: Long) extends DsType(_.set(_, value))
+  final case class DsBoolean(value: Boolean) extends DsType(_.set(_, value))
+  final case class DsDouble(value: Double) extends DsType(_.set(_, value))
+  final case class DsKey(value: Ref[_]) extends DsType(_.set(_, value.ref))
+  final case class DsLatLng(value: Geo) extends DsType(_.set(_, value.toLatLng))
+  final case object DsRemove extends DsType(_.remove(_))
 }
 
 /** companion object for `Decoder`, including Magnolia generic derivation */
-object Decoder {
+object Decoder extends Decoder_1 {
   type Typeclass[T] = Decoder[T]
-  
-  /** generates a new `Decoder` for the type `T` */
-  implicit def gen[T]: Decoder[T] = macro Magnolia.gen[T]
 
   /** combines `Decoder`s for each parameter of the case class `T` into a `Decoder` for `T` */
   def combine[T](caseClass: CaseClass[Decoder, T]): Decoder[T] = (obj, prefix) =>
     caseClass.construct { param =>
-      param.typeclass.decode(obj, if (prefix.isEmpty) param.label else s"$prefix.${param.label}")
+      param.typeclass.decode(obj, ifEmpty(prefix, param.label, _+s".${param.label}"))
     }
 
   /** tries `Decoder`s for each subtype of sealed trait `T` until one doesn`t throw an exception
@@ -157,40 +158,68 @@ object Decoder {
   implicit val float: Decoder[Float] = _.getDouble(_).toFloat
   implicit val geo: Decoder[Geo] = (obj, name) => Geo(obj.getLatLng(name))
   implicit def ref[T: Dao: IdField]: Decoder[Ref[T]] = (obj, ref) => Ref[T](obj.getKey(ref))
+  
+  implicit def optional[T: Decoder]: Decoder[Option[T]] =
+    (obj, key) => if(obj.contains(key)) Some(implicitly[Decoder[T]].decode(obj, key)) else None
+  
+  implicit def collection[Coll[T] <: Traversable[T], T: Decoder](implicit cbf: CanBuildFrom[Nothing, T, Coll[T]]):
+      Decoder[Coll[T]] = new Decoder[Coll[T]] {
+    def decode(obj: BaseEntity[_], prefix: String): Coll[T] = {
+      Stream.from(0).map { idx =>
+        Try(implicitly[Decoder[T]].decode(obj, s"$prefix.$idx"))
+      }.takeWhile(_.isSuccess).map(_.get).to[Coll]
+    }
+  }
+}
+
+trait Decoder_1 {
+  /** generates a new `Decoder` for the type `T` */
+  implicit def gen[T]: Decoder[T] = macro Magnolia.gen[T]
 }
 
 /** companion object for `Encoder`, including Magnolia generic derivation */
-object Encoder {
+object Encoder extends Encoder_1 {
   type Typeclass[T] = Encoder[T]
   
-  /** generates a new `Encoder` for the type `T` */
-  implicit def gen[T]: Encoder[T] = macro Magnolia.gen[T]
-
   /** combines `Encoder`s for each parameter of the case class `T` into a `Encoder` for `T` */
-  def combine[T](caseClass: CaseClass[Encoder, T]): Encoder[T] = value => DsType.DsObject {
-    caseClass.parameters.flatMap { param =>
-      param.typeclass.encode(param.dereference(value)) match {
-        case value: DsSimpleType => List(param.label -> value)
-        case DsType.DsObject(elems) => elems.map { case (k, v) => (s"${param.label}.$k", v) }
+  def combine[T](caseClass: CaseClass[Encoder, T]): Encoder[T] = { (key, value) =>
+    caseClass.parameters.to[List].flatMap { param =>
+      param.typeclass.encode(param.label, param.dereference(value)) map {
+        case (k, v) => (ifEmpty(key, k, _+s".$k"), v)
       }
-    }.toMap
+    }
   }
 
   /** chooses the appropriate `Encoder` of a subtype of the sealed trait `T` based on its type */
   def dispatch[T](sealedTrait: SealedTrait[Encoder, T]): Encoder[T] =
-    value => sealedTrait.dispatch(value) { st => st.typeclass.encode(st.cast(value)) }
+    (key, value) => sealedTrait.dispatch(value) { st => st.typeclass.encode(key, st.cast(value)) }
 
-  implicit val string: Encoder[String] = DsType.DsString(_)
-  implicit val long: Encoder[Long] = DsType.DsLong(_)
-  implicit val int: Encoder[Int] = DsType.DsLong(_)
-  implicit val short: Encoder[Short] = DsType.DsLong(_)
-  implicit val char: Encoder[Char] = c => DsType.DsString(c.toString)
-  implicit val byte: Encoder[Byte] = DsType.DsLong(_)
-  implicit val boolean: Encoder[Boolean] = DsType.DsBoolean(_)
-  implicit val double: Encoder[Double] = DsType.DsDouble(_)
-  implicit val float: Encoder[Float] = DsType.DsDouble(_)
-  implicit val geo: Encoder[Geo] = DsType.DsLatLng(_)
-  implicit def ref[T]: Encoder[Ref[T]] = DsType.DsKey(_)
+  implicit val string: Encoder[String] = (k, v) => List((k, DsType.DsString(v)))
+  implicit val long: Encoder[Long] = (k, v) => List((k, DsType.DsLong(v)))
+  implicit val int: Encoder[Int] = (k, v) => List((k, DsType.DsLong(v)))
+  implicit val short: Encoder[Short] = (k, v) => List((k, DsType.DsLong(v)))
+  implicit val char: Encoder[Char] = (k, v) => List((k, DsType.DsString(v.toString)))
+  implicit val byte: Encoder[Byte] = (k, v) => List((k, DsType.DsLong(v)))
+  implicit val boolean: Encoder[Boolean] = (k, v) => List((k, DsType.DsBoolean(v)))
+  implicit val double: Encoder[Double] = (k, v) => List((k, DsType.DsDouble(v)))
+  implicit val float: Encoder[Float] = (k, v) => List((k, DsType.DsDouble(v)))
+  implicit val geo: Encoder[Geo] = (k, v) => List((k, DsType.DsLatLng(v)))
+  implicit def ref[T]: Encoder[Ref[T]] = (k, v) => List((k, DsType.DsKey(v)))
+
+  implicit def optional[T: Encoder]: Encoder[Option[T]] = (k, opt) => opt match {
+    case None => List((k, DsType.DsRemove))
+    case Some(value) => implicitly[Encoder[T]].encode(k, value)
+  }
+  
+  implicit def collection[Coll[T] <: Traversable[T], T: Encoder]: Encoder[Coll[T]] = (prefix, coll) =>
+    coll.to[List].zipWithIndex.flatMap { case (t, idx) =>
+      implicitly[Encoder[T]].encode(ifEmpty(prefix, s"$idx", _+s".$idx"), t)
+    }
+}
+
+trait Encoder_1 {
+  /** generates a new `Encoder` for the type `T` */
+  implicit def gen[T]: Encoder[T] = macro Magnolia.gen[T]
 }
 
 /** companion object for data access objects */
