@@ -125,6 +125,7 @@ object DsType {
   final case class DsKey(value: Ref[_]) extends DsSimpleType(_.set(_, value.ref))
   final case class DsLatLng(value: Geo) extends DsSimpleType(_.set(_, value.toLatLng))
   final case class DsObject(keyValues: Map[String, DsSimpleType]) extends DsType
+  final case object DsNull extends DsSimpleType(_.remove(_))
 }
 
 /** companion object for `Decoder`, including Magnolia generic derivation */
@@ -157,6 +158,9 @@ object Decoder {
   implicit val float: Decoder[Float] = _.getDouble(_).toFloat
   implicit val geo: Decoder[Geo] = (obj, name) => Geo(obj.getLatLng(name))
   implicit def ref[T: Dao: IdField]: Decoder[Ref[T]] = (obj, ref) => Ref[T](obj.getKey(ref))
+  
+  implicit def optional[T: Decoder]: Decoder[Option[T]] =
+    (obj, key) => if(obj.contains(key)) Some(implicitly[Decoder[T]].decode(obj)) else None
 }
 
 /** companion object for `Encoder`, including Magnolia generic derivation */
@@ -191,6 +195,11 @@ object Encoder {
   implicit val float: Encoder[Float] = DsType.DsDouble(_)
   implicit val geo: Encoder[Geo] = DsType.DsLatLng(_)
   implicit def ref[T]: Encoder[Ref[T]] = DsType.DsKey(_)
+
+  implicit def optional[T: Encoder]: Encoder[Option[T]] = {
+    case None => DsType.DsNull
+    case Some(value) => implicitly[Encoder[T]].encode(value)
+  }
 }
 
 /** companion object for data access objects */
