@@ -14,7 +14,7 @@ Datastore.
 An early release of Efflorescence is available on Maven Central, and can be
 included in an sbt project by including,
 ```
-"com.propensive" %% "efflorescence" % "0.1.0"
+"com.propensive" %% "efflorescence" % "0.2.0"
 ```
 in your `build.sbt` file.
 
