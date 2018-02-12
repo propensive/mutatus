@@ -44,6 +44,9 @@ object `package` {
     def delete()(implicit svc: Service, id: IdField[T], dao: Dao[T]): Unit =
       svc.readWrite.delete(dao.keyFactory.newKey(id.key(value)))
   }
+
+  private[efflorescence] def ifEmpty[T](str: String, empty: T, nonEmpty: String => T): T =
+    if(str.isEmpty) empty else nonEmpty(str)
 }
 
 final class id() extends StaticAnnotation
@@ -64,7 +67,7 @@ object Namespace { implicit val defaultNamespace: Namespace = Namespace("") }
 
 /** a GCP namespace */
 case class Namespace(name: String) {
-  def option: Option[String] = if(name.isEmpty) None else Some(name)
+  def option: Option[String] = ifEmpty(name, None, Some(_))
 }
 
 /** companion object for Geo instances */
@@ -129,16 +132,13 @@ object DsType {
 }
 
 /** companion object for `Decoder`, including Magnolia generic derivation */
-object Decoder {
+object Decoder extends Decoder_1 {
   type Typeclass[T] = Decoder[T]
-  
-  /** generates a new `Decoder` for the type `T` */
-  implicit def gen[T]: Decoder[T] = macro Magnolia.gen[T]
 
   /** combines `Decoder`s for each parameter of the case class `T` into a `Decoder` for `T` */
   def combine[T](caseClass: CaseClass[Decoder, T]): Decoder[T] = (obj, prefix) =>
     caseClass.construct { param =>
-      param.typeclass.decode(obj, if (prefix.isEmpty) param.label else s"$prefix.${param.label}")
+      param.typeclass.decode(obj, ifEmpty(prefix, param.label, _+s".${param.label}"))
     }
 
   /** tries `Decoder`s for each subtype of sealed trait `T` until one doesn`t throw an exception
@@ -160,9 +160,9 @@ object Decoder {
   implicit def ref[T: Dao: IdField]: Decoder[Ref[T]] = (obj, ref) => Ref[T](obj.getKey(ref))
   
   implicit def optional[T: Decoder]: Decoder[Option[T]] =
-    (obj, key) => if(obj.contains(key)) Some(implicitly[Decoder[T]].decode(obj)) else None
-
-  implicit def collection[Coll[_], T: Decoder](implicit cbf: CanBuildFrom[Nothing, T, Coll[T]]):
+    (obj, key) => if(obj.contains(key)) Some(implicitly[Decoder[T]].decode(obj, key)) else None
+  
+  implicit def collection[Coll[T] <: Traversable[T], T: Decoder](implicit cbf: CanBuildFrom[Nothing, T, Coll[T]]):
       Decoder[Coll[T]] = new Decoder[Coll[T]] {
     def decode(obj: BaseEntity[_], prefix: String): Coll[T] = {
       Stream.from(0).map { idx =>
@@ -172,18 +172,20 @@ object Decoder {
   }
 }
 
+trait Decoder_1 {
+  /** generates a new `Decoder` for the type `T` */
+  implicit def gen[T]: Decoder[T] = macro Magnolia.gen[T]
+}
+
 /** companion object for `Encoder`, including Magnolia generic derivation */
-object Encoder {
+object Encoder extends Encoder_1 {
   type Typeclass[T] = Encoder[T]
   
-  /** generates a new `Encoder` for the type `T` */
-  implicit def gen[T]: Encoder[T] = macro Magnolia.gen[T]
-
   /** combines `Encoder`s for each parameter of the case class `T` into a `Encoder` for `T` */
   def combine[T](caseClass: CaseClass[Encoder, T]): Encoder[T] = { (key, value) =>
     caseClass.parameters.to[List].flatMap { param =>
       param.typeclass.encode(param.label, param.dereference(value)) map {
-        case (key, v) => (s"${param.label}.$key", v)
+        case (k, v) => (ifEmpty(key, k, _+s".$k"), v)
       }
     }
   }
@@ -208,11 +210,16 @@ object Encoder {
     case None => List((k, DsType.DsRemove))
     case Some(value) => implicitly[Encoder[T]].encode(k, value)
   }
-
+  
   implicit def collection[Coll[T] <: Traversable[T], T: Encoder]: Encoder[Coll[T]] = (prefix, coll) =>
     coll.to[List].zipWithIndex.flatMap { case (t, idx) =>
-      implicitly[Encoder[T]].encode(if(prefix.isEmpty) s"$idx" else s"$prefix.$idx", t)
+      implicitly[Encoder[T]].encode(ifEmpty(prefix, s"$idx", _+s".$idx"), t)
     }
+}
+
+trait Encoder_1 {
+  /** generates a new `Encoder` for the type `T` */
+  implicit def gen[T]: Encoder[T] = macro Magnolia.gen[T]
 }
 
 /** companion object for data access objects */
