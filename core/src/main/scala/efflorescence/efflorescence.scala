@@ -109,6 +109,9 @@ case class Dao[T](kind: String)(implicit svc: Service, namespace: Namespace) {
       def hasNext: Boolean = results.hasNext
     }.map(decoder.decode(_))
   }
+
+  def unapply(id: String)(implicit decoder: Decoder[T]): Option[T] =
+    Try(decoder.decode(svc.read.get(keyFactory.newKey(id)))).toOption
 }
 
 /** generic type for Datastore datatypes */
@@ -201,9 +204,9 @@ object Encoder {
   implicit val geo: Encoder[Geo] = (k, v) => List((k, DsType.DsLatLng(v)))
   implicit def ref[T]: Encoder[Ref[T]] = (k, v) => List((k, DsType.DsKey(v)))
 
-  implicit def optional[T: Encoder]: Encoder[Option[T]] = {
-    case (k, None) => List((k, DsType.DsRemove))
-    case (k, Some(value)) => implicitly[Encoder[T]].encode(k, value)
+  implicit def optional[T: Encoder]: Encoder[Option[T]] = (k, opt) => opt match {
+    case None => List((k, DsType.DsRemove))
+    case Some(value) => implicitly[Encoder[T]].encode(k, value)
   }
 
   implicit def collection[Coll[T] <: Traversable[T], T: Encoder]: Encoder[Coll[T]] = (prefix, coll) =>
