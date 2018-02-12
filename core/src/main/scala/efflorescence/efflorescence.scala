@@ -30,11 +30,11 @@ object `package` {
   implicit class DataExt[T <: Product](value: T) {
     /** saves the case class as a Datastore entity */
     def save()(implicit svc: Service, encoder: Encoder[T], id: IdField[T], dao: Dao[T]): Ref[T] = {
-      val DsType.DsObject(keyValues) = encoder.encode(value)
+      val keyValues = encoder.encode("", value)
 
       new Ref[T](svc.readWrite.put {
         keyValues.foldLeft(Entity.newBuilder(dao.keyFactory.newKey(id.key(value)))) {
-          case (entity, (k, dsType: DsSimpleType)) => dsType.set(entity, k)
+          case (entity, (key, dsType: DsType)) => dsType.set(entity, key)
         }.build()
       }.getKey)
     }
@@ -76,7 +76,7 @@ case class Geo(lat: Double, lng: Double) { def toLatLng = LatLng.of(lat, lng) }
 case class Service(readWrite: Datastore) { def read: DatastoreReader = readWrite }
 
 /** typeclass for encoding a value into a type which can be stored in the GCP Datastore */
-trait Encoder[T] { def encode(t: T): DsType }
+trait Encoder[T] { def encode(key: String, value: T): List[(String, DsType)] }
 
 /** typeclass for decoding a value from the GCP Datastore into a Scala type */
 trait Decoder[T] { def decode(obj: BaseEntity[_], prefix: String = ""): T }
@@ -111,21 +111,17 @@ case class Dao[T](kind: String)(implicit svc: Service, namespace: Namespace) {
 }
 
 /** generic type for Datastore datatypes */
-sealed trait DsType
-
-/** generic type for simple Datastore datatypes, which have no complex structure */
-class DsSimpleType(val set: (Entity.Builder, String) => Entity.Builder) extends DsType
+class DsType(val set: (Entity.Builder, String) => Entity.Builder)
 
 /** companion object for DsType */
 object DsType {
-  final case class DsString(value: String) extends DsSimpleType(_.set(_, value))
-  final case class DsLong(value: Long) extends DsSimpleType(_.set(_, value))
-  final case class DsBoolean(value: Boolean) extends DsSimpleType(_.set(_, value))
-  final case class DsDouble(value: Double) extends DsSimpleType(_.set(_, value))
-  final case class DsKey(value: Ref[_]) extends DsSimpleType(_.set(_, value.ref))
-  final case class DsLatLng(value: Geo) extends DsSimpleType(_.set(_, value.toLatLng))
-  final case class DsObject(keyValues: Map[String, DsSimpleType]) extends DsType
-  final case object DsNull extends DsSimpleType(_.remove(_))
+  final case class DsString(value: String) extends DsType(_.set(_, value))
+  final case class DsLong(value: Long) extends DsType(_.set(_, value))
+  final case class DsBoolean(value: Boolean) extends DsType(_.set(_, value))
+  final case class DsDouble(value: Double) extends DsType(_.set(_, value))
+  final case class DsKey(value: Ref[_]) extends DsType(_.set(_, value.ref))
+  final case class DsLatLng(value: Geo) extends DsType(_.set(_, value.toLatLng))
+  final case object DsRemove extends DsType(_.remove(_))
 }
 
 /** companion object for `Decoder`, including Magnolia generic derivation */
@@ -161,6 +157,14 @@ object Decoder {
   
   implicit def optional[T: Decoder]: Decoder[Option[T]] =
     (obj, key) => if(obj.contains(key)) Some(implicitly[Decoder[T]].decode(obj)) else None
+
+  implicit def list[T: Decoder]: Decoder[List[T]] = new Decoder[List[T]] {
+    def decode(obj: BaseEntity[_], prefix: String): List[T] = {
+      Stream.from(0).map { idx =>
+        Try(implicitly[Decoder[T]].decode(obj, s"$prefix.$idx"))
+      }.takeWhile(_.isSuccess).map(_.get).to[List]
+    }
+  }
 }
 
 /** companion object for `Encoder`, including Magnolia generic derivation */
@@ -171,35 +175,39 @@ object Encoder {
   implicit def gen[T]: Encoder[T] = macro Magnolia.gen[T]
 
   /** combines `Encoder`s for each parameter of the case class `T` into a `Encoder` for `T` */
-  def combine[T](caseClass: CaseClass[Encoder, T]): Encoder[T] = value => DsType.DsObject {
-    caseClass.parameters.flatMap { param =>
-      param.typeclass.encode(param.dereference(value)) match {
-        case value: DsSimpleType => List(param.label -> value)
-        case DsType.DsObject(elems) => elems.map { case (k, v) => (s"${param.label}.$k", v) }
+  def combine[T](caseClass: CaseClass[Encoder, T]): Encoder[T] = { (key, value) =>
+    caseClass.parameters.to[List].flatMap { param =>
+      param.typeclass.encode(param.label, param.dereference(value)) map {
+        case (key, v) => (s"${param.label}.$key", v)
       }
-    }.toMap
+    }
   }
 
   /** chooses the appropriate `Encoder` of a subtype of the sealed trait `T` based on its type */
   def dispatch[T](sealedTrait: SealedTrait[Encoder, T]): Encoder[T] =
-    value => sealedTrait.dispatch(value) { st => st.typeclass.encode(st.cast(value)) }
+    (key, value) => sealedTrait.dispatch(value) { st => st.typeclass.encode(key, st.cast(value)) }
 
-  implicit val string: Encoder[String] = DsType.DsString(_)
-  implicit val long: Encoder[Long] = DsType.DsLong(_)
-  implicit val int: Encoder[Int] = DsType.DsLong(_)
-  implicit val short: Encoder[Short] = DsType.DsLong(_)
-  implicit val char: Encoder[Char] = c => DsType.DsString(c.toString)
-  implicit val byte: Encoder[Byte] = DsType.DsLong(_)
-  implicit val boolean: Encoder[Boolean] = DsType.DsBoolean(_)
-  implicit val double: Encoder[Double] = DsType.DsDouble(_)
-  implicit val float: Encoder[Float] = DsType.DsDouble(_)
-  implicit val geo: Encoder[Geo] = DsType.DsLatLng(_)
-  implicit def ref[T]: Encoder[Ref[T]] = DsType.DsKey(_)
+  implicit val string: Encoder[String] = (k, v) => List((k, DsType.DsString(v)))
+  implicit val long: Encoder[Long] = (k, v) => List((k, DsType.DsLong(v)))
+  implicit val int: Encoder[Int] = (k, v) => List((k, DsType.DsLong(v)))
+  implicit val short: Encoder[Short] = (k, v) => List((k, DsType.DsLong(v)))
+  implicit val char: Encoder[Char] = (k, v) => List((k, DsType.DsString(v.toString)))
+  implicit val byte: Encoder[Byte] = (k, v) => List((k, DsType.DsLong(v)))
+  implicit val boolean: Encoder[Boolean] = (k, v) => List((k, DsType.DsBoolean(v)))
+  implicit val double: Encoder[Double] = (k, v) => List((k, DsType.DsDouble(v)))
+  implicit val float: Encoder[Float] = (k, v) => List((k, DsType.DsDouble(v)))
+  implicit val geo: Encoder[Geo] = (k, v) => List((k, DsType.DsLatLng(v)))
+  implicit def ref[T]: Encoder[Ref[T]] = (k, v) => List((k, DsType.DsKey(v)))
 
   implicit def optional[T: Encoder]: Encoder[Option[T]] = {
-    case None => DsType.DsNull
-    case Some(value) => implicitly[Encoder[T]].encode(value)
+    case (k, None) => List((k, DsType.DsRemove))
+    case (k, Some(value)) => implicitly[Encoder[T]].encode(k, value)
   }
+
+  implicit def list[T: Encoder]: Encoder[List[T]] = (prefix, list) =>
+    list.zipWithIndex.flatMap { case (t, idx) =>
+      implicitly[Encoder[T]].encode(if(prefix.isEmpty) s"$idx" else s"$prefix.$idx", t)
+    }
 }
 
 /** companion object for data access objects */
