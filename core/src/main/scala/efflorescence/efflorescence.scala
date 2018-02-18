@@ -1,4 +1,4 @@
-/* Efflorescence, version 0.2.0. Copyright 2016 Jon Pretty, Propensive Ltd.
+/* Efflorescence, version 0.10.0. Copyright 2018 Jon Pretty, Propensive Ltd.
  *
  * The primary distribution site is: http://propensive.com/
  *
@@ -16,7 +16,7 @@ package efflorescence
 
 import magnolia._
 import adversaria._
-import com.google.cloud.datastore._
+import com.google.cloud.datastore, datastore._
 import util.Try
 import language.experimental.macros, language.existentials, language.higherKinds
 import annotation.StaticAnnotation
@@ -30,24 +30,28 @@ object `package` {
   /** provides `save` and `delete` methods on case class instances */
   implicit class DataExt[T <: Product](value: T) {
     /** saves the case class as a Datastore entity */
-    def save()(implicit svc: Service, encoder: Encoder[T], id: IdField[T], dao: Dao[T]): Ref[T] = {
+    def save[R]()(implicit svc: Service, encoder: Encoder[T], dao: Dao[T], idField: IdField[T, R]): Ref[T] = {
       val keyValues = encoder.encode("", value)
 
       new Ref[T](svc.readWrite.put {
-        keyValues.foldLeft(Entity.newBuilder(dao.keyFactory.newKey(id.key(value)))) {
-          case (entity, (key, dsType: DsType)) => dsType.set(entity, key)
+        val key = idField.idKey(idField.key(value)).newKey(dao.keyFactory)
+        keyValues.foldLeft(Entity.newBuilder(key)) {
+          case (entity, (key, dsType)) => dsType.set(entity, key)
         }.build()
       }.getKey)
     }
 
     /** deletes the Datastore entity with this ID */
-    def delete()(implicit svc: Service, id: IdField[T], dao: Dao[T]): Unit =
-      svc.readWrite.delete(dao.keyFactory.newKey(id.key(value)))
+    def delete[R]()(implicit svc: Service, dao: Dao[T], idField: IdField[T, R]): Unit =
+      svc.readWrite.delete(idField.idKey(idField.key(value)).newKey(dao.keyFactory))
   }
 
   private[efflorescence] def ifEmpty[T](str: String, empty: T, nonEmpty: String => T): T =
     if(str.isEmpty) empty else nonEmpty(str)
 }
+
+case class NotSavedException(kind: String) extends
+    RuntimeException("entity of type $kind cannot be deleted becasue it has not been saved")
 
 final class id() extends StaticAnnotation
 
@@ -80,17 +84,82 @@ case class Geo(lat: Double, lng: Double) { def toLatLng = LatLng.of(lat, lng) }
 case class Service(readWrite: Datastore) { def read: DatastoreReader = readWrite }
 
 /** typeclass for encoding a value into a type which can be stored in the GCP Datastore */
-trait Encoder[T] { def encode(key: String, value: T): List[(String, DsType)] }
+trait Encoder[T] {
+  def encode(key: String, value: T): List[(String, DsType)]
+  def contraMap[T2](fn: T2 => T): Encoder[T2] = (k, v) => encode(k, fn(v))
+}
 
 /** typeclass for decoding a value from the GCP Datastore into a Scala type */
-trait Decoder[T] { def decode(obj: BaseEntity[_], prefix: String = ""): T }
+trait Decoder[T] {
+  def decode(obj: BaseEntity[_], prefix: String = ""): T
+  def map[T2](fn: T => T2): Decoder[T2] = (obj, p) => fn(decode(obj, p))
+}
+
+trait SomeIdField[-T] {
+  type Return
+  def key(t: T): Return
+  def idKey(r: Return): IdKey
+}
 
 /** typeclass for generating an ID field from a case class */
-trait IdField[T] { def key(t: T): String }
+abstract class IdField[-T, R](toId: ToId[R]) extends SomeIdField[T] {
+  type Return = R
+  def key(t: T): R
+  def idKey(r: R): IdKey = toId.toId(r)
+}
 
 object IdField {
-  implicit def annotationId[T](implicit ann: FindMetadata[id, T]): IdField[T] =
-    new IdField[T] { def key(t: T): String = ann.get(t).toString }
+
+  type FindMetadataAux[T, R] = FindMetadata[id, T] { type Return = R }
+
+  implicit def annotationId[T, R](implicit ann: FindMetadataAux[T, R], toId: ToId[R]): SomeIdField[T] =
+    new IdField[T, R](toId) { def key(t: T): R = ann.get(t) }
+
+  def from[T, R](fn: T => R)(implicit toId: ToId[R]): IdField[T, R] =
+    new IdField[T, R](toId) { def key(t: T): R = fn(t) }
+}
+
+object ToId {
+  implicit val long: ToId[Long] = LongId(_)
+  implicit val int: ToId[Int] = LongId(_)
+  implicit val short: ToId[Short] = LongId(_)
+  implicit val byte: ToId[Byte] = LongId(_)
+  implicit val string: ToId[String] = StringId(_)
+  implicit val guid: ToId[Guid] = guid => StringId(guid.guid)
+  implicit val auto: ToId[Auto] = v => LongId(v.id)
+}
+
+trait ToId[R] { def toId(value: R): IdKey  }
+
+case class Auto(id: Long = -1) extends AnyVal {
+  override def toString = id.toString
+}
+
+sealed trait IdKey { def newKey(keyFactory: KeyFactory): Key }
+
+case class StringId(id: String) extends IdKey {
+  def newKey(kf: KeyFactory): Key = kf.newKey(id)
+}
+
+object Guid {
+  def apply(str: String): Guid =
+    new Guid(if(str == "") java.util.UUID.randomUUID().toString else str)
+
+  def apply(): Guid = apply("")
+}
+
+class Guid(val guid: String) extends IdKey {
+  def newKey(kf: KeyFactory): Key = kf.newKey(guid)
+  override def hashCode = guid.hashCode
+  override def equals(that: Any) = that match {
+    case that: Guid => that.guid == guid
+    case _ => false
+  }
+  override def toString = guid
+}
+
+case class LongId(id: Long) extends IdKey {
+  def newKey(kf: KeyFactory): Key = kf.newKey(id)
 }
 
 /** a data access object for a particular type */
@@ -113,8 +182,10 @@ case class Dao[T](kind: String)(implicit svc: Service, namespace: Namespace) {
     }.map(decoder.decode(_))
   }
 
-  def unapply(id: String)(implicit decoder: Decoder[T]): Option[T] =
-    Try(decoder.decode(svc.read.get(keyFactory.newKey(id)))).toOption
+  def unapply[R](id: R)(implicit decoder: Decoder[T], idField: IdField[T, R]): Option[T] = {
+    val key = idField.idKey(id).newKey(keyFactory)
+    Try(decoder.decode(svc.read.get(key))).toOption
+  }
 }
 
 /** generic type for Datastore datatypes */
@@ -149,6 +220,7 @@ object Decoder extends Decoder_1 {
 
   implicit val int: Decoder[Int] = _.getLong(_).toInt
   implicit val string: Decoder[String] = _.getString(_)
+  implicit val guid: Decoder[Guid] = string.map(Guid(_))
   implicit val long: Decoder[Long] = _.getLong(_)
   implicit val byte: Decoder[Byte] = _.getLong(_).toByte
   implicit val short: Decoder[Short] = _.getLong(_).toShort
@@ -157,7 +229,7 @@ object Decoder extends Decoder_1 {
   implicit val double: Decoder[Double] = _.getDouble(_)
   implicit val float: Decoder[Float] = _.getDouble(_).toFloat
   implicit val geo: Decoder[Geo] = (obj, name) => Geo(obj.getLatLng(name))
-  implicit def ref[T: Dao: IdField]: Decoder[Ref[T]] = (obj, ref) => Ref[T](obj.getKey(ref))
+  implicit def ref[T, R](implicit idField: IdField[T, R]): Decoder[Ref[T]] = (obj, ref) => Ref[T](obj.getKey(ref))
   
   implicit def optional[T: Decoder]: Decoder[Option[T]] =
     (obj, key) => if(obj.contains(key)) Some(implicitly[Decoder[T]].decode(obj, key)) else None
@@ -195,6 +267,7 @@ object Encoder extends Encoder_1 {
     (key, value) => sealedTrait.dispatch(value) { st => st.typeclass.encode(key, st.cast(value)) }
 
   implicit val string: Encoder[String] = (k, v) => List((k, DsType.DsString(v)))
+  implicit val guid: Encoder[Guid] = string.contraMap[Guid](_.guid)
   implicit val long: Encoder[Long] = (k, v) => List((k, DsType.DsLong(v)))
   implicit val int: Encoder[Int] = (k, v) => List((k, DsType.DsLong(v)))
   implicit val short: Encoder[Short] = (k, v) => List((k, DsType.DsLong(v)))

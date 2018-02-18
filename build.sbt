@@ -9,7 +9,7 @@ lazy val core = crossProject(JSPlatform, JVMPlatform)
   .settings(buildSettings: _*)
   .settings(publishSettings: _*)
   .settings(scalaMacroDependencies: _*)
-  .settings(libraryDependencies += "com.propensive" %% "magnolia" % "0.6.1")
+  .settings(libraryDependencies += "com.propensive" %% "magnolia" % "0.7.0")
   .settings(libraryDependencies += "com.google.cloud" % "google-cloud-datastore" % "1.14.0")
   .settings(libraryDependencies += "com.propensive" %% "adversaria" % "0.2.0")
   .settings(moduleName := "efflorescence")
@@ -21,7 +21,7 @@ lazy val buildSettings = Seq(
   organization := "com.propensive",
   scalaVersion := "2.12.4",
   name := "efflorescence",
-  version := "0.7.0",
+  version := "0.10.1",
   scalacOptions ++= Seq(
     "-deprecation",
     "-feature",
