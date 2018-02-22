@@ -30,7 +30,7 @@ object `package` {
   /** provides `save` and `delete` methods on case class instances */
   implicit class DataExt[T <: Product](value: T) {
     /** saves the case class as a Datastore entity */
-    def save[R]()(implicit svc: Service, encoder: Encoder[T], dao: Dao[T], idField: IdField[T, R]): Ref[T] = {
+    def save()(implicit svc: Service, encoder: Encoder[T], dao: Dao[T], idField: IdField[T]): Ref[T] = {
       val keyValues = encoder.encode("", value)
 
       new Ref[T](svc.readWrite.put {
@@ -42,7 +42,7 @@ object `package` {
     }
 
     /** deletes the Datastore entity with this ID */
-    def delete[R]()(implicit svc: Service, dao: Dao[T], idField: IdField[T, R]): Unit =
+    def delete()(implicit svc: Service, dao: Dao[T], idField: IdField[T]): Unit =
       svc.readWrite.delete(idField.idKey(idField.key(value)).newKey(dao.keyFactory))
   }
 
@@ -95,28 +95,31 @@ trait Decoder[T] {
   def map[T2](fn: T => T2): Decoder[T2] = (obj, p) => fn(decode(obj, p))
 }
 
-trait SomeIdField[-T] {
+/** typeclass for generating an ID field from a case class */
+abstract class IdField[-T] {
   type Return
   def key(t: T): Return
-  def idKey(r: Return): IdKey
-}
-
-/** typeclass for generating an ID field from a case class */
-abstract class IdField[-T, R](toId: ToId[R]) extends SomeIdField[T] {
-  type Return = R
-  def key(t: T): R
-  def idKey(r: R): IdKey = toId.toId(r)
+  def toId: ToId[Return]
+  def idKey(r: Return): IdKey = toId.toId(r)
 }
 
 object IdField {
 
   type FindMetadataAux[T, R] = FindMetadata[id, T] { type Return = R }
 
-  implicit def annotationId[T, R](implicit ann: FindMetadataAux[T, R], toId: ToId[R]): SomeIdField[T] =
-    new IdField[T, R](toId) { def key(t: T): R = ann.get(t) }
+  implicit def annotationId[T, R](implicit ann: FindMetadataAux[T, R], implicitToId: ToId[R]): IdField[T] { type Return = ann.Return } =
+    new IdField[T] {
+      type Return = ann.Return
+      def toId: ToId[Return] = implicitToId
+      def key(t: T): Return = ann.get(t)
+    }
 
-  def from[T, R](fn: T => R)(implicit toId: ToId[R]): IdField[T, R] =
-    new IdField[T, R](toId) { def key(t: T): R = fn(t) }
+  def from[T, R](fn: T => R)(implicit implicitToId: ToId[R]): IdField[T] { type Return = R } =
+    new IdField[T] {
+      type Return = R
+      def toId: ToId[Return] = implicitToId
+      def key(t: T): R = fn(t)
+    }
 }
 
 object ToId {
@@ -182,7 +185,7 @@ case class Dao[T](kind: String)(implicit svc: Service, namespace: Namespace) {
     }.map(decoder.decode(_))
   }
 
-  def unapply[R](id: R)(implicit decoder: Decoder[T], idField: IdField[T, R]): Option[T] = {
+  def unapply[R](id: R)(implicit decoder: Decoder[T], idField: IdField[T] { type Return = R }): Option[T] = {
     val key = idField.idKey(id).newKey(keyFactory)
     Try(decoder.decode(svc.read.get(key))).toOption
   }
@@ -229,7 +232,7 @@ object Decoder extends Decoder_1 {
   implicit val double: Decoder[Double] = _.getDouble(_)
   implicit val float: Decoder[Float] = _.getDouble(_).toFloat
   implicit val geo: Decoder[Geo] = (obj, name) => Geo(obj.getLatLng(name))
-  implicit def ref[T, R](implicit idField: IdField[T, R]): Decoder[Ref[T]] = (obj, ref) => Ref[T](obj.getKey(ref))
+  implicit def ref[T](implicit idField: IdField[T]): Decoder[Ref[T]] = (obj, ref) => Ref[T](obj.getKey(ref))
   
   implicit def optional[T: Decoder]: Decoder[Option[T]] =
     (obj, key) => if(obj.contains(key)) Some(implicitly[Decoder[T]].decode(obj, key)) else None
