@@ -107,7 +107,7 @@ object IdField {
 
   type FindMetadataAux[T, R] = FindMetadata[id, T] { type Return = R }
 
-  implicit def annotationId[T, R](implicit ann: FindMetadataAux[T, R], implicitToId: ToId[R]): IdField[T] { type Return = ann.Return } =
+  implicit def annotationId[T, R](implicit ann: FindMetadata[id, T] { type Return = R }, implicitToId: ToId[R]): IdField[T] { type Return = ann.Return } =
     new IdField[T] {
       type Return = ann.Return
       def toId: ToId[Return] = implicitToId
@@ -149,6 +149,12 @@ object Guid {
     new Guid(if(str == "") java.util.UUID.randomUUID().toString else str)
 
   def apply(): Guid = apply("")
+
+  private val pattern = java.util.regex.Pattern.compile("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+  def unapply(str: String): Option[Guid] =
+    if(pattern.matcher(str).matches()) Some(Guid(str))
+    else None
 }
 
 class Guid(val guid: String) extends IdKey {
