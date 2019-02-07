@@ -1,29 +1,15 @@
-[![Latest version](https://index.scala-lang.org/propensive/efflorescence/latest.svg)](https://index.scala-lang.org/propensive/efflorescence)
-[![Maven Central](https://maven-badges.herokuapp.com/maven-central/com.propensive/efflorescence_2.12/badge.svg)](https://maven-badges.herokuapp.com/maven-central/com.propensive/efflorescence_2.12)
+# Mutatus
 
-# Efflorescence
-
-[![Join the chat at https://gitter.im/propensive/efflorescence](https://badges.gitter.im/propensive/efflorescence.svg)](https://gitter.im/propensive/efflorescence?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
-
-Efflorescence is an experimental library for working with cloud-based data
+Mutatus is an experimental library for working with cloud-based data
 stores. It currently provides an ORM layer for the Google Cloud Platform
 Datastore.
 
-## Availability
-
-An early release of Efflorescence is available on Maven Central, and can be
-included in an sbt project by including,
-```
-"com.propensive" %% "efflorescence" % "0.2.0"
-```
-in your `build.sbt` file.
-
 ## Usage
 
-To use Efflorescence, you should first set up a [GCP
+To use Mutatus, you should first set up a [GCP
 account](https://cloud.google.com/), and grant appropriate access rights to a
 service account, as [described
-here](https://cloud.google.com/storage/docs/authentication). Efflorescence uses
+here](https://cloud.google.com/storage/docs/authentication). Mutatus uses
 the Java API provided by Google to handle the underlying communication to the
 GCP. This library expects to read the environment variable
 `GOOGLE_APPLICATION_CREDENTIALS`, pointing to a local file containing those
@@ -36,9 +22,9 @@ thrown by the Google API.
 If that has been completed succesfully, that is the most difficult part of the
 instructions completed, and everything from now on is trivial.
 
-To get started, first import the `efflorescence` package,
+To get started, first import the `mutatus` package,
 ```scala
-import efflorescence._
+import mutatus._
 ```
 and create a case class you would like to store, for example,
 ```scala
@@ -124,10 +110,10 @@ production-ready.
 
 ## Website
 
-There is currently no website for Efflorescence.
+There is currently no website for Mutatus.
 
 ## License
 
-Efflorescence is made available under the Apache 2.0 license.
+Mutatus is made available under the Apache 2.0 license.
 
 

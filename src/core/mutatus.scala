@@ -1,4 +1,4 @@
-/* Efflorescence, version 0.10.0. Copyright 2018 Jon Pretty, Propensive Ltd.
+/* Mutatus, version 0.10.0. Copyright 2018 Jon Pretty, Propensive Ltd.
  *
  * The primary distribution site is: http://propensive.com/
  *
@@ -12,7 +12,7 @@
  * either express or implied. See the License for the specific language governing permissions
  * and limitations under the License.
  */
-package efflorescence
+package mutatus
 
 import magnolia._
 import adversaria._
@@ -22,7 +22,7 @@ import language.experimental.macros, language.existentials, language.higherKinds
 import annotation.StaticAnnotation
 import collection.generic.CanBuildFrom
 
-/** Efflorescence package object */
+/** Mutatus package object */
 object `package` {
   /** provides a default instance of the GCP Datastore service */
   implicit val defaultDataStore: Service = Service(DatastoreOptions.getDefaultInstance.getService)
@@ -46,7 +46,7 @@ object `package` {
       svc.readWrite.delete(idField.idKey(idField.key(value)).newKey(dao.keyFactory))
   }
 
-  private[efflorescence] def ifEmpty[T](str: String, empty: T, nonEmpty: String => T): T =
+  private[mutatus] def ifEmpty[T](str: String, empty: T, nonEmpty: String => T): T =
     if(str.isEmpty) empty else nonEmpty(str)
 }
 
@@ -174,7 +174,7 @@ case class LongId(id: Long) extends IdKey {
 /** a data access object for a particular type */
 case class Dao[T](kind: String)(implicit svc: Service, namespace: Namespace) {
 
-  private[efflorescence] lazy val keyFactory = {
+  private[mutatus] lazy val keyFactory = {
     val baseFactory = svc.readWrite.newKeyFactory().setKind(kind)
     namespace.option.foldLeft(baseFactory)(_.setNamespace(_))
   }
