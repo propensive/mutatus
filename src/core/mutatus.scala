@@ -92,8 +92,13 @@ trait Encoder[T] {
 /** typeclass for decoding a value from the GCP Datastore into a Scala type */
 trait Decoder[T] {
   def decode(obj: BaseEntity[_], prefix: String = ""): T
-  def map[T2](fn: T => T2): Decoder[T2] = (obj, p) => fn(decode(obj, p))
+
+  def map[T2](fn: T => T2): Decoder[T2] = (obj, p) => try fn(decode(obj, p)) catch {
+    case npe: NullPointerException => throw MutatusException(s"field at path $p was null")
+  }
 }
+
+case class MutatusException(msg: String) extends Exception(msg)
 
 /** typeclass for generating an ID field from a case class */
 abstract class IdField[-T] {
