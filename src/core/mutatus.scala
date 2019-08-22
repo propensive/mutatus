@@ -256,10 +256,10 @@ object Decoder extends Decoder_1 {
   }
   
   implicit def optional[T: Decoder]: Decoder[Option[T]] =
-    (obj, key) => string.decode(obj, s"$key.type") match {
+    (obj, key) => try { string.decode(obj, s"$key.type") match {
       case "None" => None
       case "Some" => Some(implicitly[Decoder[T]].decode(obj, s"$key.value"))
-    }
+    } } catch { case e: Exception => None }
   
 }
 
@@ -308,16 +308,6 @@ object Encoder extends Encoder_1 {
   implicit def optional[T: Encoder]: Encoder[Option[T]] = (k, opt) => opt match {
     case None => List((s"$k.type", DsType.DsString("None")))
     case Some(value) => (s"$k.type", DsType.DsString("Some")) :: implicitly[Encoder[T]].encode(s"$k.value", value)
-  }
-}
-
-object OldOptional {
-  implicit def optional[T: Decoder]: Decoder[Option[T]] =
-    (obj, key) => if(obj.contains(key)) Some(implicitly[Decoder[T]].decode(obj, key)) else None
-  
-  implicit def optional[T: Encoder]: Encoder[Option[T]] = (k, opt) => opt match {
-    case None => List((k, DsType.DsRemove))
-    case Some(value) => implicitly[Encoder[T]].encode(k, value)
   }
 }
 
