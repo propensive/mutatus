@@ -281,7 +281,7 @@ object Encoder extends Encoder_1 {
   /** chooses the appropriate `Encoder` of a subtype of the sealed trait `T` based on its type */
   def dispatch[T](sealedTrait: SealedTrait[Encoder, T]): Encoder[T] =
     (key, value) => sealedTrait.dispatch(value) { st =>
-      ("type", DsType.DsString(st.typeName.full)) :: st.typeclass.encode(key, st.cast(value))
+      (s"$key.type", DsType.DsString(st.typeName.full)) :: st.typeclass.encode(key, st.cast(value))
     }
 
   implicit val string: Encoder[String] = (k, v) => List((k, DsType.DsString(v)))
