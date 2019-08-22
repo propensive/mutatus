@@ -306,8 +306,8 @@ object Encoder extends Encoder_1 {
     }
   
   implicit def optional[T: Encoder]: Encoder[Option[T]] = (k, opt) => opt match {
-    case None => List((s"$k.type", "None"))
-    case Some(value) => (s"$k.type", "Some") :: implicitly[Encoder[T]].encode(s"$k.value", value)
+    case None => List((s"$k.type", DsType.DsString("None")))
+    case Some(value) => (s"$k.type", DsType.DsString("Some")) :: implicitly[Encoder[T]].encode(s"$k.value", value)
   }
 }
 
