@@ -254,6 +254,13 @@ object Decoder extends Decoder_1 {
       }.takeWhile(_.isSuccess).map(_.get).to[Coll]
     }
   }
+  
+  implicit def optional[T: Decoder]: Decoder[Option[T]] =
+    (obj, key) => string.decode(obj, s"$key.type") match {
+      case "None" => None
+      case "Some" => Some(implicitly[Decoder[T]].decode(obj, s"$key.value"))
+    }
+  
 }
 
 trait Decoder_1 {
@@ -297,6 +304,11 @@ object Encoder extends Encoder_1 {
     coll.to[List].zipWithIndex.flatMap { case (t, idx) =>
       implicitly[Encoder[T]].encode(ifEmpty(prefix, s"$idx", _+s".$idx"), t)
     }
+  
+  implicit def optional[T: Encoder]: Encoder[Option[T]] = (k, opt) => opt match {
+    case None => List((s"$k.type", "None"))
+    case Some(value) => (s"$k.type", "Some") :: implicitly[Encoder[T]].encode(s"$k.value", value)
+  }
 }
 
 object OldOptional {
