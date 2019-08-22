@@ -229,8 +229,10 @@ object Decoder extends Decoder_1 {
   /** tries `Decoder`s for each subtype of sealed trait `T` until one doesn`t throw an exception
    *
    *  This is a suboptimal implementation, and a better solution may be possible with more work. */
-  def dispatch[T](st: SealedTrait[Decoder, T]): Decoder[T] = (obj, prefix) =>
-    st.subtypes.view.map { sub => Try(sub.typeclass.decode(obj, prefix)) }.find(_.isSuccess).get.get
+  def dispatch[T](st: SealedTrait[Decoder, T]): Decoder[T] = { (obj, prefix) =>
+    val typeName = obj.getString(s"$prefix.type")
+    st.subtypes.find(_.typeName.full == typeName).get.typeclass.decode(obj, prefix)
+  }
 
   implicit val int: Decoder[Int] = _.getLong(_).toInt
   implicit val string: Decoder[String] = _.getString(_)
@@ -278,7 +280,9 @@ object Encoder extends Encoder_1 {
 
   /** chooses the appropriate `Encoder` of a subtype of the sealed trait `T` based on its type */
   def dispatch[T](sealedTrait: SealedTrait[Encoder, T]): Encoder[T] =
-    (key, value) => sealedTrait.dispatch(value) { st => st.typeclass.encode(key, st.cast(value)) }
+    (key, value) => sealedTrait.dispatch(value) { st =>
+      ("type", DsType.DsString(st.typeName.full)) :: st.typeclass.encode(key, st.cast(value))
+    }
 
   implicit val string: Encoder[String] = (k, v) => List((k, DsType.DsString(v)))
   implicit val guid: Encoder[Guid] = string.contraMap[Guid](_.guid)

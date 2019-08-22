@@ -1,0 +1,8 @@
+[submodule "magnolia"]
+	path = magnolia
+	url = git@github.com:propensive/magnolia.git
+	branch = fury
+[submodule "adversaria"]
+	path = adversaria
+	url = git@github.com:propensive/adversaria.git
+	branch = fury
