@@ -246,10 +246,6 @@ object Decoder extends Decoder_1 {
   implicit val float: Decoder[Float] = _.getDouble(_).toFloat
   implicit val geo: Decoder[Geo] = (obj, name) => Geo(obj.getLatLng(name))
   implicit def ref[T](implicit idField: IdField[T]): Decoder[Ref[T]] = (obj, ref) => Ref[T](obj.getKey(ref))
-  
-  implicit def optional[T: Decoder]: Decoder[Option[T]] =
-    (obj, key) => if(obj.contains(key)) Some(implicitly[Decoder[T]].decode(obj, key)) else None
-  
   implicit def collection[Coll[T] <: Traversable[T], T: Decoder](implicit cbf: CanBuildFrom[Nothing, T, Coll[T]]):
       Decoder[Coll[T]] = new Decoder[Coll[T]] {
     def decode(obj: BaseEntity[_], prefix: String): Coll[T] = {
@@ -297,15 +293,20 @@ object Encoder extends Encoder_1 {
   implicit val geo: Encoder[Geo] = (k, v) => List((k, DsType.DsLatLng(v)))
   implicit def ref[T]: Encoder[Ref[T]] = (k, v) => List((k, DsType.DsKey(v)))
 
-  implicit def optional[T: Encoder]: Encoder[Option[T]] = (k, opt) => opt match {
-    case None => List((k, DsType.DsRemove))
-    case Some(value) => implicitly[Encoder[T]].encode(k, value)
-  }
-  
   implicit def collection[Coll[T] <: Traversable[T], T: Encoder]: Encoder[Coll[T]] = (prefix, coll) =>
     coll.to[List].zipWithIndex.flatMap { case (t, idx) =>
       implicitly[Encoder[T]].encode(ifEmpty(prefix, s"$idx", _+s".$idx"), t)
     }
+}
+
+object OldOptional {
+  implicit def optional[T: Decoder]: Decoder[Option[T]] =
+    (obj, key) => if(obj.contains(key)) Some(implicitly[Decoder[T]].decode(obj, key)) else None
+  
+  implicit def optional[T: Encoder]: Encoder[Option[T]] = (k, opt) => opt match {
+    case None => List((k, DsType.DsRemove))
+    case Some(value) => implicitly[Encoder[T]].encode(k, value)
+  }
 }
 
 trait Encoder_1 {
