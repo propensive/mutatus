@@ -259,7 +259,9 @@ object Decoder extends Decoder_1 {
     (obj, key) => try { string.decode(obj, s"$key.type") match {
       case "None" => None
       case "Some" => Some(implicitly[Decoder[T]].decode(obj, s"$key.value"))
-    } } catch { case e: Exception => None }
+    } } catch { case e: Exception =>
+      try Some(implicitly[Decoder[T]].decode(obj, key)) catch { case e: Exception => None }
+    }
   
 }
 
