@@ -223,7 +223,8 @@ object Decoder extends Decoder_1 {
   /** combines `Decoder`s for each parameter of the case class `T` into a `Decoder` for `T` */
   def combine[T](caseClass: CaseClass[Decoder, T]): Decoder[T] = (obj, prefix) =>
     caseClass.construct { param =>
-      param.typeclass.decode(obj, ifEmpty(prefix, param.label, _+s".${param.label}"))
+      try param.typeclass.decode(obj, ifEmpty(prefix, param.label, _+s".${param.label}"))
+      catch { case e: Exception => param.default.get }
     }
 
   /** tries `Decoder`s for each subtype of sealed trait `T` until one doesn`t throw an exception
