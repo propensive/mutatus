@@ -46,6 +46,8 @@ object `package` {
       svc.readWrite.delete(idField.idKey(idField.key(value)).newKey(dao.keyFactory))
   }
 
+  
+
   private[mutatus] def ifEmpty[T](str: String, empty: T, nonEmpty: String => T): T =
     if(str.isEmpty) empty else nonEmpty(str)
 }
@@ -185,16 +187,10 @@ case class Dao[T](kind: String)(implicit svc: Service, namespace: Namespace) {
   }
 
   /** returns an iterator of all the values of this type stored in the GCP Platform */
-  def all()(implicit decoder: Decoder[T]): Iterator[T] = {
-    val baseQueryBuilder = Query.newEntityQueryBuilder().setKind(kind)
-    val query: EntityQuery = namespace.option.foldLeft(baseQueryBuilder)(_.setNamespace(_)).build()
-    val results: QueryResults[Entity] = svc.read.run(query)
+  def all()(implicit decoder: Decoder[T]): Iterator[T] = QueryBuilder(kind).find()(svc, namespace, decoder)
 
-    new Iterator[Entity] {
-      def next(): Entity = results.next()
-      def hasNext: Boolean = results.hasNext
-    }.map(decoder.decode(_))
-  }
+  /** returns query builder */
+  def query(implicit decoder: Decoder[T]): QueryBuilder[T] = QueryBuilder[T](kind)
 
   def unapply[R](id: R)(implicit decoder: Decoder[T], idField: IdField[T] { type Return = R }): Option[T] = {
     val key = idField.idKey(id).newKey(keyFactory)
