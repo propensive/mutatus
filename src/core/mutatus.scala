@@ -46,8 +46,6 @@ object `package` {
       svc.readWrite.delete(idField.idKey(idField.key(value)).newKey(dao.keyFactory))
   }
 
-  
-
   private[mutatus] def ifEmpty[T](str: String, empty: T, nonEmpty: String => T): T =
     if(str.isEmpty) empty else nonEmpty(str)
 }

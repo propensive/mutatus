@@ -9,9 +9,8 @@ case class QueryBuilder[T]private[mutatus](
     filterCriteria: Option[Filter] = None,
     orderCriteria: Map[String, StructuredQuery.OrderBy]=Map.empty,
     offset: Option[Int] = None,
-    limit: Option[Int] = None ) {
-
-	import QueryBuilder._
+    limit: Option[Int] = None) {
+  import QueryBuilder._
   sealed trait OrderBy {
     def asc(path: T => Any): OrderBy
     def desc(path: T => Any): OrderBy
@@ -32,9 +31,7 @@ case class QueryBuilder[T]private[mutatus](
     )
 
   def where(pred: T => Boolean): QueryBuilder[T] = macro QueryBuilderMacros.whereImpl[T]
-
   def sortBy(pred: (T => Any)*)(implicit orderDirection: OrderDirection): QueryBuilder[T] = macro QueryBuilderMacros.sortByImpl[T]
-
   def orderBy(pred: (OrderBy => Any)*): QueryBuilder[T] = macro QueryBuilderMacros.orderByImpl[T]
 
   def limit(limit: Int, offset: Int): QueryBuilder[T] = {
