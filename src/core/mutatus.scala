@@ -278,24 +278,24 @@ object Decoder extends Decoder_1 {
     }}.getOrElse(throw MutatusException(s"Unable to decode value for sealed trait ${st.typeName.full}"))
 
 
-  private def simpleDecoder[In, Out](fn: Value[In] => Out): Decoder[Out] = {
-    case value: Value[In] @unchecked => fn(value)
+  private def simpleDecoder[In <: Value[_], Out](fn: In => Out): Decoder[Out] = {
+    case value: In @unchecked => fn(value)
   }
 
-  implicit val int: Decoder[Int] = simpleDecoder[Long, Int](_.get().toInt)
-  implicit val long: Decoder[Long] = simpleDecoder[Long, Long](_.get())
-  implicit val byte: Decoder[Byte] = simpleDecoder[Long, Byte](_.get().toByte)
-  implicit val short: Decoder[Short] = simpleDecoder[Long, Short](_.get().shortValue())
+  implicit val int: Decoder[Int] = simpleDecoder[LongValue, Int](_.get().toInt)
+  implicit val long: Decoder[Long] = simpleDecoder[LongValue, Long](_.get())
+  implicit val byte: Decoder[Byte] = simpleDecoder[LongValue, Byte](_.get().toByte)
+  implicit val short: Decoder[Short] = simpleDecoder[LongValue, Short](_.get().shortValue())
   implicit val string: Decoder[String] = {
     case value:StringValue => value.get()
     case value => value.get().toString
   }
   implicit val guid: Decoder[Guid] = string.map(Guid(_))
-  implicit val char: Decoder[Char] = simpleDecoder[String, Char](_.get().head)
-  implicit val boolean: Decoder[Boolean] = simpleDecoder[Boolean, Boolean](_.get())
-  implicit val double: Decoder[Double] = simpleDecoder[Double, Double](_.get())
-  implicit val float: Decoder[Float] = simpleDecoder[Double, Float](_.get().toFloat)
-  implicit val geo: Decoder[Geo] = simpleDecoder[LatLng, Geo](v => Geo(v.get()))
+  implicit val char: Decoder[Char] = simpleDecoder[StringValue, Char](_.get().head)
+  implicit val boolean: Decoder[Boolean] = simpleDecoder[BooleanValue, Boolean](_.get())
+  implicit val double: Decoder[Double] = simpleDecoder[DoubleValue, Double](_.get())
+  implicit val float: Decoder[Float] = simpleDecoder[DoubleValue, Float](_.get().toFloat)
+  implicit val geo: Decoder[Geo] = simpleDecoder[LatLngValue, Geo](v => Geo(v.get()))
   implicit def ref[T](implicit idField: IdField[T]): Decoder[Ref[T]] = {
     case key: KeyValue => Ref[T](key.get())
     case entity: EntityValue => entity.get().getKey match {
