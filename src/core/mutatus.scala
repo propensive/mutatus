@@ -14,13 +14,17 @@
  */
 package mutatus
 
-import magnolia._
 import adversaria._
-import com.google.cloud.datastore, datastore._
-import util.Try
-import language.experimental.macros, language.existentials, language.higherKinds
-import annotation.StaticAnnotation
-import collection.generic.CanBuildFrom
+import com.google.cloud.datastore._
+import magnolia._
+
+import scala.annotation.StaticAnnotation
+import scala.collection.JavaConverters._
+import scala.collection.generic.CanBuildFrom
+import scala.language.experimental.macros
+import scala.language.{existentials, higherKinds}
+import scala.util.{Success, Try}
+
 
 /** Mutatus package object */
 object `package` {
@@ -34,20 +38,16 @@ object `package` {
   implicit class DataExt[T <: Product](value: T) {
 
     /** saves the case class as a Datastore entity */
-    def save()(implicit svc: Service,
-               encoder: Encoder[T],
-               dao: Dao[T],
-               idField: IdField[T]): Ref[T] = {
-      val keyValues = encoder.encode("", value)
-
-      new Ref[T](svc.readWrite.put {
-        val key = idField.idKey(idField.key(value)).newKey(dao.keyFactory)
-        keyValues
-          .foldLeft(Entity.newBuilder(key)) {
-            case (entity, (key, dsType)) => dsType.set(entity, key)
-          }
-          .build()
-      }.getKey)
+    def save()(implicit svc: Service, encoder: Encoder[T], dao: Dao[T], idField: IdField[T]): Ref[T] = {
+      encoder.encode(value) match {
+        case encodedEntity: EntityValue =>
+          new Ref[T](svc.readWrite.put{
+            val key = idField.idKey(idField.key(value)).newKey(dao.keyFactory)
+            Entity.newBuilder(key, encodedEntity.get()).build()
+          }.getKey
+          )
+        case other => throw MutatusException(s"Unable to store non entity type ${other.getType}")
+      }
     }
 
     /** deletes the Datastore entity with this ID */
@@ -59,10 +59,8 @@ object `package` {
     if (str.isEmpty) empty else nonEmpty(str)
 }
 
-case class NotSavedException(kind: String)
-    extends RuntimeException(
-      "entity of type $kind cannot be deleted becasue it has not been saved"
-    )
+case class NotSavedException(kind: String) extends
+  RuntimeException("entity of type $kind cannot be deleted becasue it has not been saved")
 
 final class id() extends StaticAnnotation
 
@@ -70,8 +68,7 @@ final class id() extends StaticAnnotation
 case class Ref[T](ref: Key) {
 
   /** resolves the reference and returns a case class instance */
-  def apply()(implicit svc: Service, decoder: Decoder[T]): T =
-    decoder.decode(svc.read.get(ref))
+  def apply()(implicit svc: Service, decoder: Decoder[T]): T = decoder.decodeEntity(svc.read.get(ref))
   override def toString: String = s"$Ref[${ref.getKind}]($key)"
 
   /** a `String` version of the key contained by this reference */
@@ -92,28 +89,24 @@ object Geo {
 }
 
 /** a geographical position, with latitude and longitude */
-case class Geo(lat: Double, lng: Double) { def toLatLng = LatLng.of(lat, lng) }
+case class Geo(lat: Double, lng: Double) { def toLatLng: LatLng = LatLng.of(lat, lng) }
 
 /** a representation of the GCP Datastore service */
 case class Service(readWrite: Datastore) { def read: DatastoreReader = readWrite }
 
 /** typeclass for encoding a value into a type which can be stored in the GCP Datastore */
 trait Encoder[T] {
-  def encode(key: String, value: T): List[(String, DsType)]
-  def contraMap[T2](fn: T2 => T): Encoder[T2] = (k, v) => encode(k, fn(v))
+  def encode(value: T): Value[_]
+  def contraMap[T2](fn: T2 => T): Encoder[T2] = v => encode(fn(v))
 }
 
 /** typeclass for decoding a value from the GCP Datastore into a Scala type */
 trait Decoder[T] {
-  def decode(obj: BaseEntity[_], prefix: String = ""): T
-
-  def map[T2](fn: T => T2): Decoder[T2] =
-    (obj, p) =>
-      try fn(decode(obj, p))
-      catch {
-        case npe: NullPointerException =>
-          throw MutatusException(s"field at path $p was null")
-    }
+  def decodeEntity(entity: Entity): T = decode(EntityValue.of(entity))
+  def decode(value: Value[_]): T
+  def map[T2](fn: T => T2): Decoder[T2] = v => try fn(decode(v)) catch {
+    case _: NullPointerException => throw MutatusException(s"Value of type ${v.getType} was null")
+  }
 }
 
 case class MutatusException(msg: String) extends Exception(msg)
@@ -161,7 +154,7 @@ object ToId {
 trait ToId[R] { def toId(value: R): IdKey }
 
 case class Auto(id: Long = -1) extends AnyVal {
-  override def toString = id.toString
+  override def toString: String = id.toString
 }
 
 sealed trait IdKey { def newKey(keyFactory: KeyFactory): Key }
@@ -186,12 +179,12 @@ object Guid {
 
 class Guid(val guid: String) extends IdKey {
   def newKey(kf: KeyFactory): Key = kf.newKey(guid)
-  override def hashCode = guid.hashCode
-  override def equals(that: Any) = that match {
+  override def hashCode: Int = guid.hashCode
+  override def equals(that: Any): Boolean = that match {
     case that: Guid => that.guid == guid
     case _          => false
   }
-  override def toString = guid
+  override def toString: String = guid
 }
 
 case class LongId(id: Long) extends IdKey {
@@ -217,22 +210,8 @@ case class Dao[T](kind: String)(implicit svc: Service, namespace: Namespace) {
     type Return = R
   }): Option[T] = {
     val key = idField.idKey(id).newKey(keyFactory)
-    Try(decoder.decode(svc.read.get(key))).toOption
+    Try(decoder.decodeEntity(svc.read.get(key))).toOption
   }
-}
-
-/** generic type for Datastore datatypes */
-class DsType(val set: (Entity.Builder, String) => Entity.Builder)
-
-/** companion object for DsType */
-object DsType {
-  final case class DsString(value: String) extends DsType(_.set(_, value))
-  final case class DsLong(value: Long) extends DsType(_.set(_, value))
-  final case class DsBoolean(value: Boolean) extends DsType(_.set(_, value))
-  final case class DsDouble(value: Double) extends DsType(_.set(_, value))
-  final case class DsKey(value: Ref[_]) extends DsType(_.set(_, value.ref))
-  final case class DsLatLng(value: Geo) extends DsType(_.set(_, value.toLatLng))
-  final case object DsRemove extends DsType(_.remove(_))
 }
 
 /** companion object for `Decoder`, including Magnolia generic derivation */
@@ -240,61 +219,74 @@ object Decoder extends Decoder_1 {
   type Typeclass[T] = Decoder[T]
 
   /** combines `Decoder`s for each parameter of the case class `T` into a `Decoder` for `T` */
-  def combine[T](caseClass: CaseClass[Decoder, T]): Decoder[T] =
-    (obj, prefix) =>
+  def combine[T](caseClass: CaseClass[Decoder, T]): Decoder[T] = {
+    case entityValue: EntityValue =>
+      val entity = entityValue.get()
       caseClass.construct { param =>
-        param.typeclass.decode(obj, ifEmpty(prefix, param.label, _ + s".${param.label}"))
-    }
+        Try {
+          param.typeclass.decode(entity.getValue(param.label))
+        }.recover {
+          case ex: Exception => param.default match {
+            case Some(default) => default
+            case None => throw MutatusException(s"Failed to generate decoder for ${caseClass.typeName.full}.${param.label}: ${ex.getMessage}, EntityKeys: ${entity.getNames.asScala.mkString(", ")}")
+          }
+        }.get
+      }
+    case _ => throw MutatusException("Tried to decode case class from value which is not EntityValue")
+  }
 
   /** tries `Decoder`s for each subtype of sealed trait `T` until one doesn`t throw an exception
-    *
-    *  This is a suboptimal implementation, and a better solution may be possible with more work. */
-  def dispatch[T](st: SealedTrait[Decoder, T]): Decoder[T] = { (obj, prefix) =>
-    val typeName = obj.getString(s"$prefix.type")
-    st.subtypes.find(_.typeName.full == typeName).get.typeclass.decode(obj, prefix)
+   *
+   *  This is a suboptimal implementation, and a better solution may be possible with more work. */
+  def dispatch[T](st: SealedTrait[Decoder, T]): Decoder[T] = value => {
+    value match {
+      case entityValue: EntityValue
+        if entityValue.get().contains("type") =>
+        val entity = entityValue.get()
+        val typeName = entity.getString("type")
+        st.subtypes.collectFirst {
+          case subtype if subtype.typeName.full == typeName => subtype.typeclass.decode(entity.getValue("value"))
+        }
+      case value => // Naive approach used when fetching entity not indexed by mutatus
+        st.subtypes.toStream
+          .map{ subtype => Try(subtype.typeclass.decode(value))}
+          .collectFirst {case Success(value) => value}
+    }}.getOrElse(sys.error(s"Unable to decode value for sealed trait ${st.typeName.full}"))
+
+  def simple[In, Out](fn: Value[In] => Out): Decoder[Out] = {
+    case value: Value[In] @unchecked => fn(value)
   }
 
-  implicit val int: Decoder[Int] = _.getLong(_).toInt
-  implicit val string: Decoder[String] = _.getString(_)
+  implicit val int: Decoder[Int] = simple[Long, Int](_.get().toInt)
+  implicit val long: Decoder[Long] = simple[Long, Long](_.get())
+  implicit val byte: Decoder[Byte] = simple[Long, Byte](_.get().toByte)
+  implicit val short: Decoder[Short] = simple[Long, Short](_.get().shortValue())
+  implicit val string: Decoder[String] = {
+    case value:StringValue => value.get()
+    case value => value.get().toString
+  }
   implicit val guid: Decoder[Guid] = string.map(Guid(_))
-  implicit val long: Decoder[Long] = _.getLong(_)
-  implicit val byte: Decoder[Byte] = _.getLong(_).toByte
-  implicit val short: Decoder[Short] = _.getLong(_).toShort
-  implicit val char: Decoder[Char] = _.getString(_).head
-  implicit val boolean: Decoder[Boolean] = _.getBoolean(_)
-  implicit val double: Decoder[Double] = _.getDouble(_)
-  implicit val float: Decoder[Float] = _.getDouble(_).toFloat
-  implicit val geo: Decoder[Geo] = (obj, name) => Geo(obj.getLatLng(name))
-  implicit def ref[T](implicit idField: IdField[T]): Decoder[Ref[T]] =
-    (obj, ref) => Ref[T](obj.getKey(ref))
-  implicit def collection[Coll[T] <: Traversable[T], T: Decoder](
-    implicit cbf: CanBuildFrom[Nothing, T, Coll[T]]
-  ): Decoder[Coll[T]] = new Decoder[Coll[T]] {
-    def decode(obj: BaseEntity[_], prefix: String): Coll[T] = {
-      Stream
-        .from(0)
-        .map { idx =>
-          Try(implicitly[Decoder[T]].decode(obj, s"$prefix.$idx"))
-        }
-        .takeWhile(_.isSuccess)
-        .map(_.get)
-        .to[Coll]
+  implicit val char: Decoder[Char] = simple[String, Char](_.get().head)
+  implicit val boolean: Decoder[Boolean] = simple[Boolean, Boolean](_.get())
+  implicit val double: Decoder[Double] = simple[Double, Double](_.get())
+  implicit val float: Decoder[Float] = simple[Double, Float](_.get().toFloat)
+  implicit val geo: Decoder[Geo] = simple[LatLng, Geo](v => Geo(v.get()))
+  implicit def ref[T](implicit idField: IdField[T]): Decoder[Ref[T]] = {
+    case key: KeyValue => Ref[T](key.get())
+    case entity: EntityValue => entity.get().getKey match {
+      case key: Key => Ref[T](key)
     }
   }
 
-  implicit def optional[T: Decoder]: Decoder[Option[T]] =
-    (obj, key) =>
-      try {
-        string.decode(obj, s"$key.type") match {
-          case "None" => None
-          case "Some" => Some(implicitly[Decoder[T]].decode(obj, s"$key.value"))
-        }
-      } catch {
-        case e: Exception =>
-          try Some(implicitly[Decoder[T]].decode(obj, key))
-          catch { case e: Exception => None }
-    }
+  implicit def collection[Coll[T] <: Traversable[T], T: Decoder](implicit cbf: CanBuildFrom[Nothing, T, Coll[T]]): Decoder[Coll[T]] = {
+    case _: NullValue => List.empty[T].to[Coll]
+    case list: ListValue => list.get().asScala.map(implicitly[Decoder[T]].decode(_)).to[Coll]
+  }
 
+  implicit def optional[T: Decoder]: Decoder[Option[T]] = {
+    case _:NullValue => None
+    case value => Try{implicitly[Decoder[T]].decode(value)}.toOption
+  }
 }
 
 trait Decoder_1 {
@@ -308,50 +300,47 @@ object Encoder extends Encoder_1 {
   type Typeclass[T] = Encoder[T]
 
   /** combines `Encoder`s for each parameter of the case class `T` into a `Encoder` for `T` */
-  def combine[T](caseClass: CaseClass[Encoder, T]): Encoder[T] = { (key, value) =>
-    caseClass.parameters.to[List].flatMap { param =>
-      param.typeclass.encode(param.label, param.dereference(value)) map {
-        case (k, v) => (ifEmpty(key, k, _ + s".$k"), v)
-      }
+  def combine[T](caseClass: CaseClass[Encoder, T]): Encoder[T] = value =>
+    EntityValue.of{
+      caseClass.parameters.to[List]
+        .foldLeft(FullEntity.newBuilder()){
+          case (b, param) => b.set(param.label, param.typeclass.encode(param.dereference(value)))
+        }.build()
     }
-  }
 
   /** chooses the appropriate `Encoder` of a subtype of the sealed trait `T` based on its type */
-  def dispatch[T](sealedTrait: SealedTrait[Encoder, T]): Encoder[T] =
-    (key, value) =>
-      sealedTrait.dispatch(value) { st =>
-        (s"$key.type", DsType.DsString(st.typeName.full)) :: st.typeclass
-          .encode(key, st.cast(value))
+  def dispatch[T](sealedTrait: SealedTrait[Encoder, T]): Encoder[T] = value =>
+    sealedTrait.dispatch(value) { st =>
+      EntityValue.of {
+        FullEntity.newBuilder()
+          .set("type", st.typeName.full)
+          .set("value", st.typeclass.encode(st.cast(value)
+          ))
+          .build()
+      }
     }
 
-  implicit val string: Encoder[String] = (k, v) => List((k, DsType.DsString(v)))
+  implicit val string: Encoder[String] = StringValue.of
   implicit val guid: Encoder[Guid] = string.contraMap[Guid](_.guid)
-  implicit val long: Encoder[Long] = (k, v) => List((k, DsType.DsLong(v)))
-  implicit val int: Encoder[Int] = (k, v) => List((k, DsType.DsLong(v.toLong)))
-  implicit val short: Encoder[Short] = (k, v) => List((k, DsType.DsLong(v.toLong)))
-  implicit val char: Encoder[Char] = (k, v) => List((k, DsType.DsString(v.toString)))
-  implicit val byte: Encoder[Byte] = (k, v) => List((k, DsType.DsLong(v.toLong)))
-  implicit val boolean: Encoder[Boolean] = (k, v) => List((k, DsType.DsBoolean(v)))
-  implicit val double: Encoder[Double] = (k, v) => List((k, DsType.DsDouble(v)))
-  implicit val float: Encoder[Float] = (k, v) => List((k, DsType.DsDouble(v.toDouble)))
-  implicit val geo: Encoder[Geo] = (k, v) => List((k, DsType.DsLatLng(v)))
-  implicit def ref[T]: Encoder[Ref[T]] = (k, v) => List((k, DsType.DsKey(v)))
+  implicit val char: Encoder[Char] = v => StringValue.of(v.toString)
+  implicit val long: Encoder[Long] = LongValue.of
+  implicit val int: Encoder[Int] = v => LongValue.of(v.toLong)
+  implicit val short: Encoder[Short] = v => LongValue.of(v.toLong)
+  implicit val byte: Encoder[Byte] = v => LongValue.of(v.toLong)
+  implicit val byteArray: Encoder[Array[Byte]] = v => BlobValue.of(Blob.copyFrom(v))
+  implicit val boolean: Encoder[Boolean] = BooleanValue.of
+  implicit val double: Encoder[Double] = DoubleValue.of
+  implicit val float: Encoder[Float] = v => DoubleValue.of(v.toDouble)
+  implicit val geo: Encoder[Geo] = v => LatLngValue.of(v.toLatLng)
 
-  implicit def collection[Coll[T] <: Traversable[T], T: Encoder]: Encoder[Coll[T]] =
-    (prefix, coll) =>
-      coll.to[List].zipWithIndex.flatMap {
-        case (t, idx) =>
-          implicitly[Encoder[T]].encode(ifEmpty(prefix, s"$idx", _ + s".$idx"), t)
-    }
-
-  implicit def optional[T: Encoder]: Encoder[Option[T]] =
-    (k, opt) =>
-      opt match {
-        case None => List((s"$k.type", DsType.DsString("None")))
-        case Some(value) =>
-          (s"$k.type", DsType.DsString("Some")) :: implicitly[Encoder[T]]
-            .encode(s"$k.value", value)
-    }
+  implicit def ref[T]: Encoder[Ref[T]] = v => KeyValue.of(v.ref)
+  implicit def collection[Coll[T] <: Traversable[T], T: Encoder]: Encoder[Coll[T]] = coll => ListValue.of{
+    coll.toList.map(implicitly[Encoder[T]].encode(_)).asJava
+  }
+  implicit def optional[T: Encoder]: Encoder[Option[T]] = {
+    case None => NullValue.of()
+    case Some(value) => implicitly[Encoder[T]].encode(value)
+  }
 }
 
 trait Encoder_1 {
