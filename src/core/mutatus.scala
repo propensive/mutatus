@@ -22,7 +22,10 @@ import scala.annotation.StaticAnnotation
 import scala.collection.JavaConverters._
 import scala.collection.generic.CanBuildFrom
 import scala.language.experimental.macros
+import scala.language.{existentials, higherKinds}
 import scala.util.{Success, Try}
+import scala.collection.mutable
+
 
 /** Mutatus package object */
 object `package` {
@@ -95,10 +98,8 @@ object `package` {
     if (str.isEmpty) empty else nonEmpty(str)
 }
 
-case class NotSavedException(kind: String)
-    extends RuntimeException(
-      "entity of type $kind cannot be deleted becasue it has not been saved"
-    )
+case class NotSavedException(kind: String) extends
+  RuntimeException("entity of type $kind cannot be deleted becasue it has not been saved")
 
 final class id() extends StaticAnnotation
 
@@ -106,8 +107,7 @@ final class id() extends StaticAnnotation
 case class Ref[T](ref: Key) {
 
   /** resolves the reference and returns a case class instance */
-  def apply()(implicit svc: Service, decoder: Decoder[T]): T =
-    decoder.decode(svc.read.get(ref))
+  def apply()(implicit svc: Service, decoder: Decoder[T]): T = decoder.decode(svc.read.get(ref))
   override def toString: String = s"$Ref[${ref.getKind}]($key)"
 
   /** a `String` version of the key contained by this reference */
