@@ -4,12 +4,13 @@ import com.google.cloud.datastore, datastore._
 import com.google.cloud.datastore, datastore.StructuredQuery.Filter
 import language.experimental.macros
 
-case class QueryBuilder[T]private[mutatus](
-    kind: String,
-    filterCriteria: Option[Filter] = None,
-    orderCriteria: Map[String, StructuredQuery.OrderBy]=Map.empty,
-    offset: Option[Int] = None,
-    limit: Option[Int] = None) {
+case class QueryBuilder[T] private[mutatus] (
+  kind: String,
+  filterCriteria: Option[Filter] = None,
+  orderCriteria: Map[String, StructuredQuery.OrderBy] = Map.empty,
+  offset: Option[Int] = None,
+  limit: Option[Int] = None
+) {
   import QueryBuilder._
   sealed trait OrderBy {
     def asc(path: T => Any): OrderBy
@@ -18,33 +19,45 @@ case class QueryBuilder[T]private[mutatus](
 
   // Following 2 methods would not be necessary in case if we could access private members of QueryBuilder inside macro evalulation
   def withSortCriteria(orders: StructuredQuery.OrderBy*): QueryBuilder[T] = {
-    copy[T](orderCriteria = orders.foldLeft(orderCriteria) { case (acc, order) => acc.updated(order.getProperty, order) })
+    copy[T](orderCriteria = orders.foldLeft(orderCriteria) {
+      case (acc, order) => acc.updated(order.getProperty, order)
+    })
   }
 
   def withFilterCriteria(filters: StructuredQuery.Filter*): QueryBuilder[T] =
-    copy(filterCriteria = Option((filterCriteria ++ filters).toList.distinct)
-      .filter(_.nonEmpty)
-      .map {
-        case singleFilter :: Nil => singleFilter
-        case multiple => StructuredQuery.CompositeFilter.and(multiple.head, multiple.tail: _*)
-      }
+    copy(
+      filterCriteria =
+        Option((filterCriteria ++ filters).toList.distinct).filter(_.nonEmpty).map {
+          case singleFilter :: Nil => singleFilter
+          case multiple =>
+            StructuredQuery.CompositeFilter.and(multiple.head, multiple.tail: _*)
+        }
     )
 
   def where(pred: T => Boolean): QueryBuilder[T] = macro QueryBuilderMacros.whereImpl[T]
-  def sortBy(pred: (T => Any)*)(implicit orderDirection: OrderDirection): QueryBuilder[T] = macro QueryBuilderMacros.sortByImpl[T]
-  def orderBy(pred: (OrderBy => Any)*): QueryBuilder[T] = macro QueryBuilderMacros.orderByImpl[T]
+  def sortBy(pred: (T => Any)*)(
+    implicit orderDirection: OrderDirection
+  ): QueryBuilder[T] = macro QueryBuilderMacros.sortByImpl[T]
+  def orderBy(pred: (OrderBy => Any)*): QueryBuilder[T] =
+    macro QueryBuilderMacros.orderByImpl[T]
 
   def limit(limit: Int, offset: Int): QueryBuilder[T] = {
     this.copy(limit = Some(limit), offset = Some(offset))
   }
 
   /** Materializes query and returns Iterator of entities for GCP Storage */
-  def find()(implicit svc: Service, namespace: Namespace, decoder: Decoder[T]): Iterator[T] = {
+  def find()(implicit svc: Service,
+             namespace: Namespace,
+             decoder: Decoder[T]): Iterator[T] = {
     val orderConditions = orderCriteria.values.toList
 
-    val baseQuery = namespace.option.foldLeft(Query.newEntityQueryBuilder().setKind(kind))(_.setNamespace(_))
+    val baseQuery = namespace.option.foldLeft(
+      Query.newEntityQueryBuilder().setKind(kind)
+    )(_.setNamespace(_))
     val filtered = filterCriteria.foldLeft(baseQuery)(_.setFilter(_))
-    val ordered = orderConditions.headOption.foldLeft(filtered)(_.setOrderBy(_, orderConditions.tail: _*))
+    val ordered = orderConditions.headOption.foldLeft(filtered)(
+      _.setOrderBy(_, orderConditions.tail: _*)
+    )
     val limited = limit.foldLeft(ordered)(_.setLimit(_))
     val withOffset = offset.foldLeft(limited)(_.setOffset(_))
     val query = withOffset.build()
