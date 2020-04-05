@@ -3,11 +3,12 @@ package mutatus
 import com.google.cloud.datastore, datastore._
 import com.google.cloud.datastore, datastore.StructuredQuery.Filter
 import language.experimental.macros
+import scala.collection.immutable.SortedMap
 
 case class QueryBuilder[T] private[mutatus] (
   kind: String,
   filterCriteria: Option[Filter] = None,
-  orderCriteria: Map[String, StructuredQuery.OrderBy] = Map.empty,
+  orderCriteria: List[StructuredQuery.OrderBy] = Nil,
   offset: Option[Int] = None,
   limit: Option[Int] = None
 ) {
@@ -20,7 +21,7 @@ case class QueryBuilder[T] private[mutatus] (
   // Following 2 methods would not be necessary in case if we could access private members of QueryBuilder inside macro evalulation
   def withSortCriteria(orders: StructuredQuery.OrderBy*): QueryBuilder[T] = {
     copy[T](orderCriteria = orders.foldLeft(orderCriteria) {
-      case (acc, order) => acc.updated(order.getProperty, order)
+      case (acc, order) => acc.filterNot(_.getProperty() == order.getProperty()) :+ order
     })
   }
 
@@ -49,14 +50,12 @@ case class QueryBuilder[T] private[mutatus] (
   def find()(implicit svc: Service,
              namespace: Namespace,
              decoder: Decoder[T]): Iterator[T] = {
-    val orderConditions = orderCriteria.values.toList
-
     val baseQuery = namespace.option.foldLeft(
       Query.newEntityQueryBuilder().setKind(kind)
     )(_.setNamespace(_))
     val filtered = filterCriteria.foldLeft(baseQuery)(_.setFilter(_))
-    val ordered = orderConditions.headOption.foldLeft(filtered)(
-      _.setOrderBy(_, orderConditions.tail: _*)
+    val ordered = orderCriteria.headOption.foldLeft(filtered)(
+      _.setOrderBy(_, orderCriteria.tail: _*)
     )
     val limited = limit.foldLeft(ordered)(_.setLimit(_))
     val withOffset = offset.foldLeft(limited)(_.setOffset(_))
