@@ -110,7 +110,7 @@ case class Ref[T](ref: Key) {
 
   /** resolves the reference and returns a case class instance */
   def apply()(implicit svc: Service, decoder: Decoder[T]): T =
-    decoder.decodeEntity(svc.read.get(ref))
+    decoder.decode(svc.read.get(ref))
   override def toString: String = s"$Ref[${ref.getKind}]($key)"
 
   /** a `String` version of the key contained by this reference */
@@ -144,11 +144,11 @@ trait Encoder[T] {
 
 /** typeclass for decoding a value from the GCP Datastore into a Scala type */
 trait Decoder[T] {
-  def decodeEntity(entity: Entity): T = decode(EntityValue.of(entity))
-  def decode(value: Value[_]): T
+  def decode(entity: Entity): T = decodeValue(EntityValue.of(entity))
+  def decodeValue(value: Value[_]): T
   def map[T2](fn: T => T2): Decoder[T2] =
     v =>
-      try fn(decode(v))
+      try fn(decodeValue(v))
       catch {
         case _: NullPointerException =>
           throw MutatusException(s"Value of type ${v.getType} was null")
@@ -256,7 +256,7 @@ case class Dao[T](kind: String)(implicit svc: Service, namespace: Namespace) {
     type Return = R
   }): Option[T] = {
     val key = idField.idKey(id).newKey(keyFactory)
-    Try(decoder.decodeEntity(svc.read.get(key))).toOption
+    Try(decoder.decode(svc.read.get(key))).toOption
   }
 }
 
@@ -270,7 +270,7 @@ object Decoder extends Decoder_1 {
       val entity = entityValue.get()
       caseClass.construct { param =>
         Try {
-          param.typeclass.decode(entity.getValue(param.label))
+          param.typeclass.decodeValue(entity.getValue(param.label))
         }.recover {
           case ex: Exception =>
             param.default match {
@@ -301,12 +301,12 @@ object Decoder extends Decoder_1 {
           val typeName = entity.getString("type")
           st.subtypes.collectFirst {
             case subtype if subtype.typeName.full == typeName =>
-              subtype.typeclass.decode(entity.getValue("value"))
+              subtype.typeclass.decodeValue(entity.getValue("value"))
           }
         case value => // Naive approach used when fetching entity not indexed by mutatus
           st.subtypes.toStream
             .map { subtype =>
-              Try(subtype.typeclass.decode(value))
+              Try(subtype.typeclass.decodeValue(value))
             }
             .collectFirst { case Success(value) => value }
       }
@@ -348,12 +348,12 @@ object Decoder extends Decoder_1 {
   ): Decoder[Coll[T]] = {
     case _: NullValue => List.empty[T].to[Coll]
     case list: ListValue =>
-      list.get().asScala.map(implicitly[Decoder[T]].decode(_)).to[Coll]
+      list.get().asScala.map(implicitly[Decoder[T]].decodeValue(_)).to[Coll]
   }
 
   implicit def optional[T: Decoder]: Decoder[Option[T]] = {
     case _: NullValue => None
-    case value        => Try { implicitly[Decoder[T]].decode(value) }.toOption
+    case value        => Try { implicitly[Decoder[T]].decodeValue(value) }.toOption
   }
 }
 
