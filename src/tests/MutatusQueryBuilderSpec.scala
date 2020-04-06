@@ -7,15 +7,13 @@ import mutatus.QueryBuilder.OrderDirection
 import mutatus.QueryBuilder.OrderDirection._
 import mutatus._
 import probably._
-import _root_.scala.tools.cmd.Opt
 
 case class MutatusQueryBuilderSpec()(implicit runner: Runner) {
   import MutatusQueryBuilderSpec.Model._
-
-  implicit val noopService = Service {
+  implicit val defaultDataStore = Service {
     DatastoreOptions
       .newBuilder()
-      .setProjectId("unit-testsfu")
+      .setProjectId("unit-tests")
       .setCredentials(NoCredentials.getInstance())
       .build()
       .getService

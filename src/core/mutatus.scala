@@ -431,6 +431,7 @@ trait Encoder_1 {
 /** companion object for data access objects */
 object Dao {
   implicit def apply[T](implicit metadata: TypeMetadata[T],
-                        namespace: Namespace): Dao[T] =
-    Dao(metadata.typeName)
+                        namespace: Namespace,
+                        service: Service): Dao[T] =
+    Dao(metadata.typeName)(service, namespace)
 }
