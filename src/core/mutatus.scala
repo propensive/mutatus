@@ -294,21 +294,27 @@ object Decoder extends Decoder_1 {
     *  This is a suboptimal implementation, and a better solution may be possible with more work
    **/
   def dispatch[T](st: SealedTrait[Decoder, T]): Decoder[T] =
-    value => {
-      value match {
-        case entityValue: EntityValue if entityValue.get().contains("type") =>
-          val entity = entityValue.get()
-          val typeName = entity.getString("type")
-          st.subtypes.collectFirst {
-            case subtype if subtype.typeName.full == typeName =>
-              subtype.typeclass.decodeValue(entity.getValue("value"))
+    encodedValue => {
+      // Naive approach used when fetching entity not indexed by mutatus
+      def firstSucessfull(value: Value[_]) = {
+        st.subtypes.toStream
+          .map { subtype =>
+            Try(subtype.typeclass.decodeValue(value))
           }
-        case value => // Naive approach used when fetching entity not indexed by mutatus
-          st.subtypes.toStream
-            .map { subtype =>
-              Try(subtype.typeclass.decodeValue(value))
+          .collectFirst { case Success(value) => value }
+      }
+
+      encodedValue match {
+        case entityValue: EntityValue =>
+          Try(entityValue.get.getEntity("_meta").getString("typename"))
+            .map { typeName =>
+              st.subtypes.collectFirst {
+                case subtype if subtype.typeName.full == typeName =>
+                  subtype.typeclass.decodeValue(entityValue)
+              }
             }
-            .collectFirst { case Success(value) => value }
+            .getOrElse(firstSucessfull(encodedValue))
+        case encodedValue => firstSucessfull(encodedValue)
       }
     }.getOrElse(
       throw MutatusException(
@@ -384,12 +390,18 @@ object Encoder extends Encoder_1 {
   def dispatch[T](sealedTrait: SealedTrait[Encoder, T]): Encoder[T] =
     value =>
       sealedTrait.dispatch(value) { st =>
-        EntityValue.of {
-          FullEntity
-            .newBuilder()
-            .set("type", st.typeName.full)
-            .set("value", st.typeclass.encode(st.cast(value)))
-            .build()
+        st.typeclass.encode(st.cast(value)) match {
+          case encodedValue: EntityValue =>
+            val meta = EntityValue
+              .newBuilder {
+                FullEntity.newBuilder().set("typename", st.typeName.full).build()
+              }
+              .setExcludeFromIndexes(true)
+              .build()
+
+            EntityValue.of {
+              FullEntity.newBuilder(encodedValue.get()).set("_meta", meta).build()
+            }
         }
     }
 
