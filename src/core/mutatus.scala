@@ -24,7 +24,6 @@ import scala.collection.generic.CanBuildFrom
 import scala.collection.mutable
 import scala.language.experimental.macros
 import scala.util.{Success, Try}
-import scala.collection.mutable
 
 /** Mutatus package object */
 object `package` {
@@ -431,7 +430,6 @@ trait Encoder_1 {
 /** companion object for data access objects */
 object Dao {
   implicit def apply[T](implicit metadata: TypeMetadata[T],
-                        namespace: Namespace,
-                        service: Service): Dao[T] =
-    Dao(metadata.typeName)(service, namespace)
+                        namespace: Namespace): Dao[T] =
+    Dao(metadata.typeName)
 }

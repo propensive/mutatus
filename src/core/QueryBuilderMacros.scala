@@ -8,6 +8,7 @@ import mutatus.utils.BinaryTree._
 class QueryBuilderMacros(val c: blackbox.Context) {
   import c.universe._
   private val self = c.prefix
+
   private val selectLikeOperators = Set("isEmpty",
                                         "isDefined",
                                         "last",
@@ -149,6 +150,7 @@ class QueryBuilderMacros(val c: blackbox.Context) {
       case Node(op, l, r) =>
         q"${resolveArg(l)}.${TermName(op.toString())}(${resolveArg(r)})"
     }
+  }
 
     private def resolvePath: mutatus.utils.BinaryTree[c.Tree] => c.Tree = {
       case Leaf(path) => path

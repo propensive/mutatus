@@ -1,0 +1,5 @@
+INFO  started: Metals version 0.8.3 in workspace '/home/wojciechmazur/Documents/mutatus/src'
+INFO  time: initialize in 0.4s
+WARN  no build tool detected in workspace '/home/wojciechmazur/Documents/mutatus/src'. The most common cause for this problem is that the editor was opened in the wrong working directory, for example if you use sbt then the workspace directory should contain build.sbt. 
+WARN  no build target for: /home/wojciechmazur/Documents/mutatus/src/core/mutatus.scala
+INFO  shutting down Metals
