@@ -7,6 +7,7 @@ import mutatus.QueryBuilder.OrderDirection
 import mutatus.QueryBuilder.OrderDirection._
 import mutatus._
 import probably._
+import com.google.api.Property
 
 case class MutatusQueryBuilderSpec()(implicit runner: Runner) {
   import MutatusQueryBuilderSpec.Model._
@@ -59,8 +60,8 @@ case class MutatusQueryBuilderSpec()(implicit runner: Runner) {
     builder.where(_.optionalParam.isEmpty) -> PropertyFilter.isNull("optionalParam"),
     builder.where(_.optionalParam.isDefined) -> PropertyFilter.gt("optionalParam",
                                                                   NullValue.of()),
-    builder.where(_.innerClass.deeperOpt.map(_.inner.some3).isDefined) -> PropertyFilter
-      .gt("innerClass.deeperOpt.inner.some3", NullValue.of()),
+    builder.where(_.innerClassOpt.flatMap(_.deeperOpt).map(_.inner.some3).isDefined) -> PropertyFilter
+      .gt("innerClassOpt.deeperOpt.inner.some3", NullValue.of()),
     builder.where(_.optionalParam.contains("param")) -> PropertyFilter.eq(
       "optionalParam",
       "param"
@@ -88,10 +89,47 @@ case class MutatusQueryBuilderSpec()(implicit runner: Runner) {
     )
   ).zipWithIndex.foreach {
     case ((queryBuilder: QueryBuilder[QueringTestEntity], filter), idx) => {
-      test("builds query conditions")(queryBuilder.filterCriteria)
-        .assert(_.contains(filter), _ => s"failed at case $idx, expected filter $filter")
+      test(s"builds query conditions - case $idx")(queryBuilder.filterCriteria).assert {
+        fc =>
+          val passed = fc.contains(filter)
+          if (!passed) {
+            println { s"""
+              Failed at case $idx
+              Expected: ${Some(filter)}
+              Actual:   $fc """.stripMargin }
+          }
+          passed
+      }
     }
   }
+
+  test("builds multiple cirtiera within lambda") {
+    val x = 5
+    builder.where(
+      e =>
+        e.intParam == x + 1 && e.innerClassOpt.exists { inner =>
+          inner.intParam > 0 &&
+          inner.optionalParam.exists(_ > 1) &&
+          inner.deeper.optInner.exists(x => x.some3 <= 42 && x.none.isDefined)
+      }
+    )
+  }.assert(result => {
+    val expected = CompositeFilter.and(
+      PropertyFilter.eq("intParam", 6),
+      PropertyFilter.gt("innerClassOpt.intParam", 0),
+      PropertyFilter.gt("innerClassOpt.optionalParam", 1),
+      PropertyFilter.le("innerClassOpt.deeper.optInner.some3", 42),
+      PropertyFilter.gt("innerClassOpt.deeper.optInner.none", NullValue.of())
+    )
+    val passed = result.filterCriteria.contains(expected)
+    if (!passed) {
+      println(s"""
+              Expected: ${Some(expected)}
+              Actual:   ${result.filterCriteria}
+              """.stripMargin)
+    }
+    passed
+  })
 
   List(
     builder.orderBy(_.asc(_.intParam)) -> OrderBy.asc("intParam"),
@@ -165,8 +203,7 @@ case class MutatusQueryBuilderSpec()(implicit runner: Runner) {
           orderCriteria => {
             orderCriteria.size == 1 &&
             orderCriteria.head == pathToOrder(direction)(expected)
-          },
-          _ => s"failed at case $idx, expected $expected"
+          }
         )
     }
 
@@ -174,25 +211,28 @@ case class MutatusQueryBuilderSpec()(implicit runner: Runner) {
       builder.sortBy(
         _.optionalParam.get,
         _.innerClassOpt.map(_.deeper.some2),
-        _.innerClassOpt
-          .flatMap(_.deeperOpt)
-          .map(_.some2) //It would fail in case of _.innerClassOpt.flatMap(_.deeperOpt).get.some2
+        _.innerClassOpt.flatMap(_.deeperOpt).get.some2
       )
-    }.assert { result =>
-      println(result.orderCriteria)
-      result.orderCriteria == List(
+    }.assert(result => {
+      val expected = List(
         "optionalParam",
         "innerClassOpt.deeper.some2",
         "innerClassOpt.deeperOpt.some2"
       ).map(pathToOrder(direction))
-    }
-
+      val passed = result.orderCriteria.toList == expected
+      if (!passed) {
+        println(s"""
+              Expected: ${expected}
+              Actual:   ${result.orderCriteria}
+              """.stripMargin)
+      }
+      passed
+    })
   }
-
 }
 object MutatusQueryBuilderSpec {
   object Model {
-    case class InnerClass3(some3: Int = 3)
+    case class InnerClass3(some3: Int = 3, none: Option[String] = None)
     case class InnerClass2(some2: Int = 2,
                            inner: InnerClass3 = InnerClass3(),
                            optInner: Option[InnerClass3] = None)
