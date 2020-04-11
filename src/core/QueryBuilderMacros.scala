@@ -8,7 +8,6 @@ import mutatus.utils.BinaryTree._
 class QueryBuilderMacros(val c: blackbox.Context) {
   import c.universe._
   private val self = c.prefix
-
   private val selectLikeOperators = Set("isEmpty",
                                         "isDefined",
                                         "last",
@@ -19,12 +18,12 @@ class QueryBuilderMacros(val c: blackbox.Context) {
                                         "tail",
                                         "get",
                                         "toString")
-
-  val filter = q"_root_.com.google.cloud.datastore.StructuredQuery.PropertyFilter"
-  val composite = q"_root_.com.google.cloud.datastore.StructuredQuery.CompositeFilter.and"
-  val operationMapping: PartialFunction[c.Tree, (String, Option[c.Tree]) => c.Tree] = {
-
-    case q"==" =>
+  private val filter = q"_root_.com.google.cloud.datastore.StructuredQuery.PropertyFilter"
+  private val composite =
+    q"_root_.com.google.cloud.datastore.StructuredQuery.CompositeFilter.and"
+  private val operationMapping
+    : PartialFunction[c.Tree, (String, Option[c.Tree]) => c.Tree] = {
+    case q"==" | q"equals" =>
       (path, args) =>
         q"$filter.eq($path, ${args.get})"
     case q"<" =>
@@ -58,30 +57,27 @@ class QueryBuilderMacros(val c: blackbox.Context) {
         .getOrElse(
           c.abort(
             c.enclosingPosition,
-            s"Not found matching operation mapping for criteria ${critera}"
+            s"mutatus: could not transform this condition to a database query"
           )
         )
     }
 
-    val filters = CallTree(pred.tree).resolveCriteria.map(buildQueryCondition) match {
-      case Nil                    => c.abort(c.enclosingPosition, "Generated empty query, aborting")
-      case singleCondition :: Nil => singleCondition
-      case multipleConditions     => q"$composite(..$multipleConditions)"
+    CallTree(pred.tree).resolveCriteria.map(buildQueryCondition) match {
+      case Nil                    => q"$self"
+      case singleCondition :: Nil => q"$self.withFilterCriteria($singleCondition)"
+      case multipleConditions =>
+        q"$self.withFilterCriteria($composite(..$multipleConditions))"
     }
-    q"$self.withFilterCriteria(..$filters)"
   }
 
   def sortByImpl[T: c.WeakTypeTag](
     pred: c.Tree*
   )(orderDirection: c.Tree): c.universe.Tree = {
-    val sortBy: Seq[c.universe.Literal] = pred
-      .flatMap {
-        case q"(..$_) => $body" =>
-          CallTree(body).resolveCriteria
-      }
-      .map {
-        case AppliedCriteria(path, _, _) => Literal(Constant(path))
-      }
+    val sortBy: Seq[c.universe.Literal] = for {
+      predicate <- pred
+      q"(..$_) => $body" = predicate
+      AppliedCriteria(path, _, _) <- CallTree(body).resolveCriteria
+    } yield Literal(Constant(path))
 
     q"""{
          val isAscending = $orderDirection == _root_.mutatus.QueryBuilder.OrderDirection.Ascending
@@ -115,36 +111,8 @@ class QueryBuilderMacros(val c: blackbox.Context) {
     q"$self.withSortCriteria(..$sortBy)"
   }
 
-  case class CallTree(tree: mutatus.utils.BinaryTree[c.Tree]) {
+  private case class CallTree(tree: mutatus.utils.BinaryTree[c.Tree]) {
     def resolveCriteria: List[AppliedCriteria] = {
-      def buildPath(tree: c.Tree, prefix: String = ""): String = {
-        val path = tree.toString().indexOf(".") match {
-          case -1 => ""
-          case n  => tree.toString.substring(n + 1)
-        }
-        (prefix, path) match {
-          case ("", path)     => path
-          case (prefix, "")   => prefix
-          case (prefix, path) => s"$prefix.$path"
-        }
-      }.replaceAll("\"", "")
-        .replaceAllLiterally("this.", "")
-        .replaceAllLiterally("super.", "")
-
-      def resolveArg: mutatus.utils.BinaryTree[c.Tree] => c.Tree = {
-        case Empty       => q""
-        case Leaf(value) => value
-        case Node(op, l, r) =>
-          q"${resolveArg(l)}.${TermName(op.toString())}(${resolveArg(r)})"
-      }
-
-      def resolvePath: mutatus.utils.BinaryTree[c.Tree] => c.Tree = {
-        case Leaf(path) => path
-        case Node(_, l, r) =>
-          q"${buildPath(prefix = resolvePath(l).toString(), tree = resolvePath(r))}"
-        case Empty => q""
-      }
-
       def iterate(head: mutatus.utils.BinaryTree[c.Tree],
                   prefix: String): List[AppliedCriteria] = {
         head match {
@@ -160,12 +128,37 @@ class QueryBuilderMacros(val c: blackbox.Context) {
           case Empty            => Nil
         }
       }
-
       iterate(tree, "")
+    }
+
+    private def buildPath(tree: c.Tree, prefix: String = ""): String = {
+      //FIXME Maybe we should not use toString, as we're loosing it's context. In case of 'this' or 'super' we  may be able to get some usefull data
+      val path = tree.toString().split('.').tail.mkString(".")
+      (prefix, path) match {
+        case ("", path)     => path
+        case (prefix, "")   => prefix
+        case (prefix, path) => s"$prefix.$path"
+      }
+    }.replaceAll("\"", "")
+      .replaceAllLiterally("this.", "")
+      .replaceAllLiterally("super.", "")
+
+    private def resolveArg: mutatus.utils.BinaryTree[c.Tree] => c.Tree = {
+      case Empty       => q""
+      case Leaf(value) => value
+      case Node(op, l, r) =>
+        q"${resolveArg(l)}.${TermName(op.toString())}(${resolveArg(r)})"
+    }
+
+    private def resolvePath: mutatus.utils.BinaryTree[c.Tree] => c.Tree = {
+      case Leaf(path) => path
+      case Node(_, l, r) =>
+        q"${buildPath(prefix = resolvePath(l).toString(), tree = resolvePath(r))}"
+      case Empty => q""
     }
   }
 
-  object CallTree {
+  private object CallTree {
     def apply(tree: c.Tree): CallTree = CallTree(extract(tree))
     private def extract(tree: c.Tree): BinaryTree[c.Tree] = {
       tree match {
@@ -192,5 +185,7 @@ class QueryBuilderMacros(val c: blackbox.Context) {
     }
   }
 
-  case class AppliedCriteria(path: String, operation: Option[c.Tree], arg: Option[c.Tree])
+  private case class AppliedCriteria(path: String,
+                                     operation: Option[c.Tree],
+                                     arg: Option[c.Tree])
 }

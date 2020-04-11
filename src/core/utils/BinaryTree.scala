@@ -1,29 +1,26 @@
 package mutatus.utils
 
 sealed trait BinaryTree[+A] {
-  import scala.annotation.tailrec
-  import BinaryTree._
-  def value: Option[A] = this match {
-    case n: Node[A] => Some(n.v)
-    case l: Leaf[A] => Some(l.v)
-    case Empty      => None
-  }
-
-  def left: Option[BinaryTree[A]] = this match {
-    case n: Node[A] => Some(n.l)
-    case l: Leaf[A] => None
-    case Empty      => None
-  }
-
-  def right: Option[BinaryTree[A]] = this match {
-    case n: Node[A] => Some(n.r)
-    case l: Leaf[A] => None
-    case Empty      => None
-  }
+  def getValue: Option[A]
+  def leftTree: Option[BinaryTree[A]]
+  def rightTree: Option[BinaryTree[A]]
 }
 
 object BinaryTree {
-  case class Node[A](v: A, l: BinaryTree[A], r: BinaryTree[A]) extends BinaryTree[A]
-  case class Leaf[A](v: A) extends BinaryTree[A]
-  case object Empty extends BinaryTree[Nothing]
+  case class Node[A](value: A, left: BinaryTree[A], right: BinaryTree[A])
+      extends BinaryTree[A] {
+    def getValue: Option[A] = Some(value)
+    def leftTree: Option[BinaryTree[A]] = Some(left)
+    def rightTree: Option[BinaryTree[A]] = Some(right)
+  }
+  case class Leaf[A](value: A) extends BinaryTree[A] {
+    def getValue: Option[A] = Some(value)
+    def leftTree: Option[BinaryTree[A]] = None
+    def rightTree: Option[BinaryTree[A]] = None
+  }
+  case object Empty extends BinaryTree[Nothing] {
+    def getValue: Option[Nothing] = None
+    def leftTree: Option[BinaryTree[Nothing]] = None
+    def rightTree: Option[BinaryTree[Nothing]] = None
+  }
 }
