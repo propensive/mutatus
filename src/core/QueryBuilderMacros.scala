@@ -2,6 +2,8 @@ package mutatus
 
 import scala.annotation.tailrec
 import scala.reflect.macros._
+import mutatus.utils.BinaryTree
+import mutatus.utils.BinaryTree._
 
 class QueryBuilderMacros(val c: blackbox.Context) {
   import c.universe._
@@ -16,86 +18,66 @@ class QueryBuilderMacros(val c: blackbox.Context) {
                                         "tail",
                                         "get",
                                         "toString")
+  private val filter = q"_root_.com.google.cloud.datastore.StructuredQuery.PropertyFilter"
+  private val composite =
+    q"_root_.com.google.cloud.datastore.StructuredQuery.CompositeFilter.and"
+  private val operationMapping
+    : PartialFunction[c.Tree, (String, Option[c.Tree]) => c.Tree] = {
+    case q"==" | q"equals" =>
+      (path, args) =>
+        q"$filter.eq($path, ${args.get})"
+    case q"<" =>
+      (path, args) =>
+        q"$filter.lt($path, ${args.get})"
+    case q"<=" =>
+      (path, args) =>
+        q"$filter.le($path, ${args.get})"
+    case q">" =>
+      (path, args) =>
+        q"$filter.gt($path, ${args.get})"
+    case q">=" =>
+      (path, args) =>
+        q"$filter.ge($path, ${args.get})"
+    case q"isEmpty" =>
+      (path, args) =>
+        q"$filter.isNull($path)"
+    case q"isDefined" | q"nonEmpty" =>
+      (path, args) =>
+        q"$filter.gt($path, _root_.com.google.cloud.datastore.NullValue.of())"
+    case q"contains" | q"foreach" =>
+      (path, args) =>
+        q"$filter.eq($path, ${args.get})"
+  }
 
   def whereImpl[T: c.WeakTypeTag](pred: c.Expr[T => Boolean]): c.universe.Tree = {
-    val filter = q"_root_.com.google.cloud.datastore.StructuredQuery.PropertyFilter"
-    val composite =
-      q"_root_.com.google.cloud.datastore.StructuredQuery.CompositeFilter.and"
-    val predicates = pred match {
-      case Expr(q"(..$_) => $body") => body
-    }
-
-    @scala.annotation.tailrec
-    def splitFilterCriteria(tree: c.Tree, resolved: List[c.Tree] = Nil): List[c.Tree] = {
-      tree match {
-        case q"$_ || $_" =>
-          c.abort(c.enclosingPosition,
-                  s"Google Query Language does not support OR operator: ${show(tree)}")
-        case q"$head && $last" =>
-          splitFilterCriteria(head.asInstanceOf[c.Tree], last :: resolved)
-        case q"$head" => head :: resolved
-      }
-    }
-
-    def buildQueryCondition(condition: c.Tree): c.Tree = {
-      val DisassembledTree(path, operations) = disassembleSelectTree(condition)
-      val operationsMapping: PartialFunction[c.TermName, List[c.Tree] => c.Tree] = {
-        case TermName("$eq$eq") =>
-          args =>
-            q"$filter.eq($path, ${args.head})"
-        case TermName("$less") =>
-          args =>
-            q"$filter.lt($path, ${args.head})"
-        case TermName("$less$eq") =>
-          args =>
-            q"$filter.le($path, ${args.head})"
-        case TermName("$greater") =>
-          args =>
-            q"$filter.gt($path, ${args.head})"
-        case TermName("$greater$eq") =>
-          args =>
-            q"$filter.ge($path, ${args.head})"
-        case TermName("isEmpty") =>
-          _ =>
-            q"$filter.isNull($path)"
-
-        case TermName("isDefined") | TermName("nonEmpty") =>
-          _ =>
-            q"$filter.gt($path, _root_.com.google.cloud.datastore.NullValue.of())"
-        case TermName("contains") | TermName("foreach") =>
-          args =>
-            q"$filter.eq($path, ${args.head})"
-      }
-
-      operations
-        .collectFirst {
-          case (op, arg) if operationsMapping.isDefinedAt(op) =>
-            operationsMapping(op)(arg)
-        }
+    def buildQueryCondition(critera: AppliedCriteria): c.Tree = {
+      val AppliedCriteria(path, operation, args) = critera
+      operation
+        .map(operationMapping(_)(path, args))
         .getOrElse(
           c.abort(
             c.enclosingPosition,
-            s"Not found matching operation mapping for any of ${operations.map(_._1)}"
+            s"mutatus: could not transform this condition to a database query"
           )
         )
     }
 
-    val query = splitFilterCriteria(predicates).map(buildQueryCondition) match {
-      case Nil                    => c.abort(c.enclosingPosition, "Generated empty query, aborting")
-      case singleCondition :: Nil => singleCondition
-      case multipleConditions     => q"$composite(..$multipleConditions)"
+    CallTree(pred.tree).resolveCriteria.map(buildQueryCondition) match {
+      case Nil                    => q"$self"
+      case singleCondition :: Nil => q"$self.withFilterCriteria($singleCondition)"
+      case multipleConditions =>
+        q"$self.withFilterCriteria($composite(..$multipleConditions))"
     }
-    q"$self.withFilterCriteria($query)"
   }
 
   def sortByImpl[T: c.WeakTypeTag](
     pred: c.Tree*
   )(orderDirection: c.Tree): c.universe.Tree = {
-    val sortBy: Seq[c.universe.Literal] = pred
-      .collect {
-        case q"(..$_) => $body" => disassembleSelectTree(body)
-      }
-      .map(_.pathLiteral)
+    val sortBy: Seq[c.universe.Literal] = for {
+      predicate <- pred
+      q"(..$_) => $body" = predicate
+      AppliedCriteria(path, _, _) <- CallTree(body).resolveCriteria
+    } yield Literal(Constant(path))
 
     q"""{
          val isAscending = $orderDirection == _root_.mutatus.QueryBuilder.OrderDirection.Ascending
@@ -110,72 +92,100 @@ class QueryBuilderMacros(val c: blackbox.Context) {
   }
 
   def orderByImpl[T: c.WeakTypeTag](pred: c.Tree*): c.universe.Tree = {
-    val conditions = pred.collect {
-      case q"(..$_) => $_.asc((..$_) => $select)" => true -> disassembleSelectTree(select)
-      case q"(..$_) => $_.desc((..$_) => $select)" =>
-        false -> disassembleSelectTree(select)
-    }
-
-    val sortBy = conditions.map {
-      case (isAscending, dt) =>
-        if (isAscending) {
-          q"_root_.com.google.cloud.datastore.StructuredQuery.OrderBy.asc(${dt.pathLiteral})"
-        } else {
-          q"_root_.com.google.cloud.datastore.StructuredQuery.OrderBy.desc(${dt.pathLiteral})"
-        }
-    }
+    val sortBy: Seq[c.Tree] = pred
+      .collect {
+        case q"(..$_) => $_.asc((..$_) => $select)"  => true -> CallTree(select)
+        case q"(..$_) => $_.desc((..$_) => $select)" => false -> CallTree(select)
+      }
+      .flatMap {
+        case (isAscending, ct) =>
+          ct.resolveCriteria.map {
+            case AppliedCriteria(path, _, _) =>
+              if (isAscending) {
+                q"_root_.com.google.cloud.datastore.StructuredQuery.OrderBy.asc($path)"
+              } else {
+                q"_root_.com.google.cloud.datastore.StructuredQuery.OrderBy.desc($path)"
+              }
+          }
+      }
     q"$self.withSortCriteria(..$sortBy)"
   }
 
-  type OpArgs = (c.TermName, List[c.Tree])
-  private case class DisassembledTree(path: String, operations: List[OpArgs]) {
-    val pathLiteral: c.universe.Literal = Literal(Constant(path))
+  private case class CallTree(tree: mutatus.utils.BinaryTree[c.Tree]) {
+    def resolveCriteria: List[AppliedCriteria] = {
+      def iterate(head: mutatus.utils.BinaryTree[c.Tree],
+                  prefix: String): List[AppliedCriteria] = {
+        head match {
+          case Node(q"&&", l, r) => iterate(l, prefix) ++ iterate(r, prefix)
+          case Node(op, path, arg) if operationMapping.isDefinedAt(op) =>
+            AppliedCriteria(buildPath(resolvePath(path), prefix),
+                            Some(op),
+                            Option(resolveArg(arg)).filterNot(_ == q"")) :: Nil
+          case Node(op, path, Empty) =>
+            AppliedCriteria(buildPath(resolvePath(path), prefix), Some(op), None) :: Nil
+          case Node(_, path, r) => iterate(r, buildPath(resolvePath(path), prefix))
+          case Leaf(v)          => AppliedCriteria(buildPath(v, prefix), None, None) :: Nil
+          case Empty            => Nil
+        }
+      }
+      iterate(tree, "")
+    }
+
+    private def buildPath(tree: c.Tree, prefix: String = ""): String = {
+      //FIXME Maybe we should not use toString, as we're loosing it's context. In case of 'this' or 'super' we  may be able to get some usefull data
+      val path = tree.toString().split('.').tail.mkString(".")
+      (prefix, path) match {
+        case ("", path)     => path
+        case (prefix, "")   => prefix
+        case (prefix, path) => s"$prefix.$path"
+      }
+    }.replaceAll("\"", "")
+      .replaceAllLiterally("this.", "")
+      .replaceAllLiterally("super.", "")
+
+    private def resolveArg: mutatus.utils.BinaryTree[c.Tree] => c.Tree = {
+      case Empty       => q""
+      case Leaf(value) => value
+      case Node(op, l, r) =>
+        q"${resolveArg(l)}.${TermName(op.toString())}(${resolveArg(r)})"
+    }
+
+    private def resolvePath: mutatus.utils.BinaryTree[c.Tree] => c.Tree = {
+      case Leaf(path) => path
+      case Node(_, l, r) =>
+        q"${buildPath(prefix = resolvePath(l).toString(), tree = resolvePath(r))}"
+      case Empty => q""
+    }
   }
 
-  private def disassembleSelectTree(tree: c.Tree): DisassembledTree = {
-    @tailrec
-    def dissembleSelectTree(tree: c.Tree,
-                            selects: List[c.TermName] = Nil,
-                            applies: List[OpArgs] = Nil): (String, List[OpArgs]) = {
-      def isSubpath(op: String): Boolean = {
-        selectLikeOperators.contains(op) || op.headOption.exists(_.isUpper)
-      }
-
+  private object CallTree {
+    def apply(tree: c.Tree): CallTree = CallTree(extract(tree))
+    private def extract(tree: c.Tree): BinaryTree[c.Tree] = {
       tree match {
-        case q"$select.${operator}[$_](..$args)" =>
-          dissembleSelectTree(select, selects, (operator, args) :: applies)
-        case q"$select.${operator}(..$args)" =>
-          dissembleSelectTree(select, selects, (operator, args) :: applies)
-        case q"$select.${TermName(op)}" if isSubpath(op) =>
-          dissembleSelectTree(select, selects, (TermName(op), Nil) :: applies)
-        case q"$select.${operator}" =>
-          dissembleSelectTree(select, operator :: selects, applies)
-        case _ => selects.collect { case TermName(name) => name }.mkString(".") -> applies
+        case q"(..${_}) => ${body}" => extract(body)
+        case q"$path.$calledMethod[$_](..$args)" =>
+          Node(q"$calledMethod",
+               extract(path),
+               args.headOption.map(extract).getOrElse(Empty))
+        case q"$path.$calledMethod(..$args)" =>
+          Node(q"$calledMethod",
+               extract(path),
+               args.headOption.map(extract).getOrElse(Empty))
+        case q"$path.${op @ TermName(name)}"
+            if selectLikeOperators.contains(name) || name.head.isUpper =>
+          Node(q"$op", extract(path), Empty)
+        case fullPath =>
+          selectLikeOperators.find(fullPath.toString().contains) match {
+            case None => Leaf(fullPath)
+            case Some(operator) =>
+              val q"${lhs}.${operator}.${rhs}" = fullPath
+              Node(q"$operator", extract(lhs), extract(q"x.$rhs")) //x was add rhs to avoid removing it while building path as it is valid select
+          }
       }
     }
-
-    @tailrec
-    def disassembleTree(path: String,
-                        tree: c.Tree,
-                        nextOperations: List[OpArgs],
-                        allOperations: List[OpArgs]): DisassembledTree = {
-      val (subPath, innerOperation) = dissembleSelectTree(tree)
-      val newPath = (path, subPath) match {
-        case (path, "")      => path
-        case ("", subPath)   => subPath
-        case (path, subPath) => s"$path.$subPath"
-      }
-      (innerOperation ++ nextOperations) match {
-        case (op, fn @ q"(..$_) => $body" :: Nil) :: next =>
-          disassembleTree(newPath, body, next, (op, fn) :: allOperations)
-        case (opArgs @ (_, select :: Nil)) :: next =>
-          disassembleTree(newPath, select, next, opArgs :: allOperations)
-        case (opArgs @ (_, Nil)) :: next =>
-          disassembleTree(newPath, q"", next, opArgs :: allOperations)
-        case t :: Nil => DisassembledTree(newPath, t :: allOperations)
-        case Nil      => DisassembledTree(newPath, allOperations)
-      }
-    }
-    disassembleTree("", tree, Nil, Nil)
   }
+
+  private case class AppliedCriteria(path: String,
+                                     operation: Option[c.Tree],
+                                     arg: Option[c.Tree])
 }
