@@ -3,86 +3,80 @@ package mutatus.tests
 import com.google.cloud.NoCredentials
 import com.google.cloud.datastore.StructuredQuery._
 import com.google.cloud.datastore._
-import mutatus.QueryBuilder.OrderDirection
-import mutatus.QueryBuilder.OrderDirection._
 import mutatus._
 import probably._
 
 case class QueryBuilderSpec()(implicit runner: Runner) {
   import QueryBuilderSpec.Model._
-  implicit val defaultDataStore = Service {
-    DatastoreOptions
-      .newBuilder()
-      .setProjectId("unit-tests")
-      .setCredentials(NoCredentials.getInstance())
-      .build()
-      .getService
-  }
-  lazy val builder = Dao[QueringTestEntity].query
+  implicit val service = Service.noop
+  lazy val builder = Dao[QueringTestEntity].all
 
   List(
-    builder.where(_.intParam == 0) -> PropertyFilter.eq("intParam", 0),
-    builder.where(_.innerClass.intParam == 1) -> PropertyFilter.eq(
+    builder.filter(_.intParam == 0) -> PropertyFilter.eq("intParam", 0),
+    builder.filter(_.innerClass.intParam == 1) -> PropertyFilter.eq(
       "innerClass.intParam",
       1
     ),
-    builder.where(_.innerClass.deeper.some2 == 2) -> PropertyFilter.eq(
+    builder.filter(_.innerClass.deeper.some2 == 2) -> PropertyFilter.eq(
       "innerClass.deeper.some2",
       2
     ),
-    builder.where(_.innerClass.deeper.inner.some3 == 3) -> PropertyFilter.eq(
+    builder.filter(_.innerClass.deeper.inner.some3 == 3) -> PropertyFilter.eq(
       "innerClass.deeper.inner.some3",
       3
     ),
-    builder.where(_.innerClassOpt.exists(_.intParam == 1)) -> PropertyFilter.eq(
+    builder
+      .filter(_.innerClassOpt.exists(_.intParam == 1)) -> PropertyFilter.eq(
       "innerClassOpt.intParam",
       1
     ),
-    builder.where(_.innerClassOpt.exists(_.deeper.some2 == 2)) -> PropertyFilter
+    builder
+      .filter(_.innerClassOpt.exists(_.deeper.some2 == 2)) -> PropertyFilter
       .eq("innerClassOpt.deeper.some2", 2),
-    builder.where(_.innerClassOpt.exists(_.deeper.inner.some3 == 3)) -> PropertyFilter
+    builder.filter(_.innerClassOpt.exists(_.deeper.inner.some3 == 3)) -> PropertyFilter
       .eq("innerClassOpt.deeper.inner.some3", 3),
-    builder.where(_.innerClassOpt.exists(_.intParam == 1)) -> PropertyFilter.eq(
+    builder
+      .filter(_.innerClassOpt.exists(_.intParam == 1)) -> PropertyFilter.eq(
       "innerClassOpt.intParam",
       1
     ),
-    builder.where(_.innerClassOpt.exists(_.deeperOpt.exists(_.some2 == 2))) -> PropertyFilter
+    builder.filter(_.innerClassOpt.exists(_.deeperOpt.exists(_.some2 == 2))) -> PropertyFilter
       .eq("innerClassOpt.deeperOpt.some2", 2),
-    builder.where(
+    builder.filter(
       _.innerClassOpt.exists(_.deeperOpt.exists(_.inner.some3 == 3))
     ) -> PropertyFilter.eq("innerClassOpt.deeperOpt.inner.some3", 3),
-    builder.where(
+    builder.filter(
       _.innerClassOpt.exists(
         _.deeperOpt.exists(_.optInner.exists(_.some3 == 3))
       )
     ) -> PropertyFilter.eq("innerClassOpt.deeperOpt.optInner.some3", 3),
-    builder.where(_.optionalParam.isEmpty) -> PropertyFilter.isNull(
+    builder.filter(_.optionalParam.isEmpty) -> PropertyFilter.isNull(
       "optionalParam"
     ),
-    builder.where(_.optionalParam.isDefined) -> PropertyFilter.gt(
+    builder.filter(_.optionalParam.isDefined) -> PropertyFilter.gt(
       "optionalParam",
       NullValue.of()
     ),
-    builder.where(
+    builder.filter(
       _.innerClassOpt.flatMap(_.deeperOpt).map(_.inner.some3).isDefined
     ) -> PropertyFilter
       .gt("innerClassOpt.deeperOpt.inner.some3", NullValue.of()),
-    builder.where(_.optionalParam.contains("param")) -> PropertyFilter.eq(
+    builder.filter(_.optionalParam.contains("param")) -> PropertyFilter.eq(
       "optionalParam",
       "param"
     ),
-    builder.where(_.innerClass.deeper.optInner.map(_.some3).contains(1)) -> PropertyFilter
+    builder.filter(_.innerClass.deeper.optInner.map(_.some3).contains(1)) -> PropertyFilter
       .eq("innerClass.deeper.optInner.some3", 1),
-    builder.where(
+    builder.filter(
       _.innerClass.deeperOpt.flatMap(_.optInner).exists(_.some3 > 1)
     ) -> PropertyFilter
       .gt("innerClass.deeperOpt.optInner.some3", 1),
-    builder.where(_.innerClassOpt.map(_.decimalParam).contains(2.0)) -> PropertyFilter
+    builder.filter(_.innerClassOpt.map(_.decimalParam).contains(2.0)) -> PropertyFilter
       .eq("innerClassOpt.decimalParam", 2.0),
-    builder.where(
+    builder.filter(
       _.listParam.init.tail.headOption.head.lastOption.last.toString == "param"
     ) -> PropertyFilter.eq("listParam", "param"),
-    builder.where(x =>
+    builder.filter(x =>
       x.listParam.contains("paramName") &&
         x.innerClass.deeper.inner.some3 >= 3 &&
         x.innerClassOpt.map(_.deeper.optInner).exists(_.forall(_.some3 <= 3))
@@ -111,7 +105,7 @@ case class QueryBuilderSpec()(implicit runner: Runner) {
 
   test("builds multiple cirtiera within lambda") {
     val x = 5
-    builder.where(e =>
+    builder.filter(e =>
       e.intParam == x + 1 && e.innerClassOpt.exists { inner =>
         inner.intParam > 0 &&
         inner.optionalParam.exists(_ > 1) &&
@@ -137,31 +131,33 @@ case class QueryBuilderSpec()(implicit runner: Runner) {
   })
 
   List(
-    builder.orderBy(_.asc(_.intParam)) -> OrderBy.asc("intParam"),
-    builder.orderBy(_.desc(_.stringParam)) -> OrderBy.desc("stringParam"),
-    builder.orderBy(_.asc(_.innerClass.intParam)) -> OrderBy.asc(
+    builder.sortBy(_.intParam) -> OrderBy.asc("intParam"),
+    builder.sortBy(_.stringParam).reverse -> OrderBy.desc("stringParam"),
+    builder.sortBy(_.innerClass.intParam) -> OrderBy.asc(
       "innerClass.intParam"
     ),
-    builder.orderBy(_.desc(_.innerClassOpt.map(_.intParam))) -> OrderBy.desc(
+    builder.sortBy(_.innerClassOpt.map(_.intParam)).reverse -> OrderBy.desc(
       "innerClassOpt.intParam"
     ),
-    builder.orderBy(_.asc(_.innerClass.deeper.some2)) -> OrderBy.asc(
+    builder.sortBy(_.innerClass.deeper.some2) -> OrderBy.asc(
       "innerClass.deeper.some2"
     ),
     builder
-      .orderBy(_.desc(_.innerClassOpt.map(_.deeperOpt).map(_.map(_.some2)))) -> OrderBy
+      .sortBy(_.innerClassOpt.map(_.deeperOpt).map(_.map(_.some2)))
+      .reverse -> OrderBy
       .desc("innerClassOpt.deeperOpt.some2"),
     builder
-      .orderBy(_.desc(_.innerClassOpt.flatMap(_.deeperOpt).map(_.some2))) -> OrderBy
+      .sortBy(_.innerClassOpt.flatMap(_.deeperOpt).map(_.some2))
+      .reverse -> OrderBy
       .desc("innerClassOpt.deeperOpt.some2"),
-    builder.orderBy(_.asc(_.innerClass.deeper.inner.some3)) -> OrderBy.asc(
+    builder.sortBy(_.innerClass.deeper.inner.some3) -> OrderBy.asc(
       "innerClass.deeper.inner.some3"
     ),
-    builder.orderBy(
-      _.desc(
+    builder
+      .sortBy(
         _.innerClassOpt.flatMap(_.deeperOpt).flatMap(_.optInner).map(_.some3)
       )
-    ) -> OrderBy.desc("innerClassOpt.deeperOpt.optInner.some3")
+      .reverse -> OrderBy.desc("innerClassOpt.deeperOpt.optInner.some3")
   ).zipWithIndex.foreach {
     case ((query: QueryBuilder[QueringTestEntity], expected), idx) =>
       test("build orderBy criteria")(query.orderCriteria)
@@ -171,78 +167,74 @@ case class QueryBuilderSpec()(implicit runner: Runner) {
         }, _ => s"failed at case $idx, expected result: $expected")
   }
 
-  test("builds multiple orderBy criteria") {
-    builder.orderBy(
-      _.asc(_.intParam),
-      _.desc(_.innerClass.deeperOpt.flatMap(_.optInner).map(_.some3)),
-      _.asc(_.innerClassOpt.exists(_.deeper.some2 == 1))
-    )
+  test("builds multiple sortBy critera") {
+    builder
+      .sortBy(
+        _.innerClassOpt.flatMap(_.deeperOpt).get.some2
+      )
+      .sortBy(
+        _.innerClassOpt.map(_.deeper.some2),
+        _.optionalParam.get
+      )
+  }.assert(result => {
+    val expected = List(
+      "optionalParam",
+      "innerClassOpt.deeper.some2",
+      "innerClassOpt.deeperOpt.some2"
+    ).map(OrderBy.asc)
+    val passed = result.orderCriteria.toList == expected
+    if (!passed) {
+      println(s"""
+              Expected: ${expected}
+              Actual:   ${result.orderCriteria}
+              """.stripMargin)
+    }
+    passed
+  })
+
+  test("build sortBy criteria with reversed order") {
+    builder
+      .sortBy(
+        _.innerClassOpt.flatMap(_.deeperOpt).get.some2
+      )
+      .sortBy(
+        _.innerClassOpt.map(_.deeper.some2),
+        _.optionalParam.get
+      )
+      .reverse
+  }.assert(result => {
+    val expected = List(
+      "optionalParam",
+      "innerClassOpt.deeper.some2",
+      "innerClassOpt.deeperOpt.some2"
+    ).map(OrderBy.desc)
+    val passed = result.orderCriteria.toList == expected
+    if (!passed) {
+      println(s"""
+              Expected: ${expected}
+              Actual:   ${result.orderCriteria}
+              """.stripMargin)
+    }
+    passed
+  })
+
+  test("builds multiple orderBy criteria - with different orders") {
+    builder
+      .sortBy(_.innerClassOpt.map(_.deeper.some2))
+      .reverse
+      .sortBy(_.innerClass.deeperOpt.flatMap(_.optInner).map(_.some3))
+      .reverse
+      .sortBy(_.intParam)
   }.assert { query =>
+    query.orderCriteria.foreach(println)
     query.orderCriteria.toList == List(
       OrderBy.asc("intParam"),
       OrderBy.desc("innerClass.deeperOpt.optInner.some3"),
       OrderBy.asc("innerClassOpt.deeper.some2")
     )
   }
-
-  def pathToOrder(direction: OrderDirection)(path: String) = direction match {
-    case Ascending  => OrderBy.asc(path)
-    case Descending => OrderBy.desc(path)
-  }
-
-  for {
-    direction <- List(OrderDirection.Ascending, OrderDirection.Descending)
-  } {
-    implicit val implDirection: OrderDirection = direction
-    List(
-      builder.sortBy(_.intParam) -> "intParam",
-      builder.sortBy(_.stringParam) -> "stringParam",
-      builder.sortBy(_.innerClass.intParam) -> "innerClass.intParam",
-      builder
-        .sortBy(_.innerClassOpt.map(_.intParam)) -> "innerClassOpt.intParam",
-      builder.sortBy(_.innerClass.deeper.some2) -> "innerClass.deeper.some2",
-      builder
-        .sortBy(_.innerClassOpt.map(_.deeperOpt).map(_.map(_.some2))) -> "innerClassOpt.deeperOpt.some2",
-      builder
-        .sortBy(_.innerClassOpt.flatMap(_.deeperOpt).map(_.some2)) -> "innerClassOpt.deeperOpt.some2",
-      builder
-        .sortBy(_.innerClass.deeper.inner.some3) -> "innerClass.deeper.inner.some3",
-      builder.sortBy(
-        _.innerClassOpt.flatMap(_.deeperOpt).flatMap(_.optInner).map(_.some3)
-      ) -> "innerClassOpt.deeperOpt.optInner.some3"
-    ).zipWithIndex.foreach {
-      case ((query: QueryBuilder[QueringTestEntity], expected), idx) =>
-        test("builds sortBy criteria")(query.orderCriteria).assert(
-          orderCriteria => {
-            orderCriteria.size == 1 &&
-              orderCriteria.head == pathToOrder(direction)(expected)
-          }
-        )
-    }
-
-    test("builds multiple sortBy critera") {
-      builder.sortBy(
-        _.optionalParam.get,
-        _.innerClassOpt.map(_.deeper.some2),
-        _.innerClassOpt.flatMap(_.deeperOpt).get.some2
-      )
-    }.assert(result => {
-      val expected = List(
-        "optionalParam",
-        "innerClassOpt.deeper.some2",
-        "innerClassOpt.deeperOpt.some2"
-      ).map(pathToOrder(direction))
-      val passed = result.orderCriteria.toList == expected
-      if (!passed) {
-        println(s"""
-              Expected: ${expected}
-              Actual:   ${result.orderCriteria}
-              """.stripMargin)
-      }
-      passed
-    })
-  }
 }
+
 object QueryBuilderSpec {
   object Model {
     case class InnerClass3(some3: Int = 3, none: Option[String] = None)

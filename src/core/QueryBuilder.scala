@@ -4,6 +4,8 @@ import com.google.cloud.datastore, datastore._
 import com.google.cloud.datastore, datastore.StructuredQuery.Filter
 import language.experimental.macros
 import scala.collection.immutable.SortedMap
+import com.google.cloud.datastore.StructuredQuery.OrderBy.Direction
+import com.google.cloud.datastore.StructuredQuery.OrderBy
 
 case class QueryBuilder[T] private[mutatus] (
     kind: String,
@@ -12,22 +14,16 @@ case class QueryBuilder[T] private[mutatus] (
     offset: Option[Int] = None,
     limit: Option[Int] = None
 ) {
-  import QueryBuilder._
-  sealed trait OrderBy {
-    def asc(path: T => Any): OrderBy
-    def desc(path: T => Any): OrderBy
-  }
-
   // Following 2 methods would not be necessary in case if we could access private members of QueryBuilder inside macro evalulation
   def withSortCriteria(orders: StructuredQuery.OrderBy*): QueryBuilder[T] = {
     copy[T](orderCriteria = orders.foldLeft(orderCriteria) {
       case (acc, order) =>
-        acc.filterNot(_.getProperty() == order.getProperty()) :+ order
+        order :: acc.filterNot(_.getProperty() == order.getProperty())
     })
   }
 
   def withFilterCriteria(filters: StructuredQuery.Filter*): QueryBuilder[T] =
-    copy(
+    copy[T](
       filterCriteria = Option((filterCriteria ++ filters).toList.distinct)
         .filter(_.nonEmpty)
         .map {
@@ -38,23 +34,30 @@ case class QueryBuilder[T] private[mutatus] (
         }
     )
 
-  def where(pred: T => Boolean): QueryBuilder[T] =
-    macro QueryBuilderMacros.whereImpl[T]
-  def sortBy(pred: (T => Any)*)(
-      implicit orderDirection: OrderDirection
-  ): QueryBuilder[T] = macro QueryBuilderMacros.sortByImpl[T]
-  def orderBy(pred: (OrderBy => Any)*): QueryBuilder[T] =
-    macro QueryBuilderMacros.orderByImpl[T]
+  def filter(pred: T => Boolean): QueryBuilder[T] =
+    macro QueryBuilderMacros.filterImpl[T]
+  def sortBy(pred: (T => Any)*): QueryBuilder[T] =
+    macro QueryBuilderMacros.sortByImpl[T]
 
-  def limit(limit: Int, offset: Int): QueryBuilder[T] =
-    this.copy(limit = Some(limit), offset = Some(offset))
+  def reverse: QueryBuilder[T] = {
+    val reversedOrder = orderCriteria.map { critieria =>
+      val newOrderFn = critieria.getDirection() match {
+        case Direction.ASCENDING  => OrderBy.desc _
+        case Direction.DESCENDING => OrderBy.asc _
+      }
+      newOrderFn(critieria.getProperty)
+    }
+    copy[T](orderCriteria = reversedOrder)
+  }
+  def take(n: Int): QueryBuilder[T] = copy[T](limit = Some(n))
+  def drop(n: Int): QueryBuilder[T] = copy[T](offset = Some(n))
 
-  /** Materializes query and returns Iterator of entities for GCP Storage */
-  def find()(
-      implicit svc: Service,
+  /** Materializes query and returns Stream of entities for GCP Storage */
+  def apply()(
+      implicit svc: Service = Service.default,
       namespace: Namespace,
       decoder: Decoder[T]
-  ): Iterator[T] = {
+  ): Stream[T] = {
     val baseQuery = namespace.option.foldLeft(
       Query.newEntityQueryBuilder().setKind(kind)
     )(_.setNamespace(_))
@@ -67,18 +70,17 @@ case class QueryBuilder[T] private[mutatus] (
     val query = withOffset.build()
 
     val results = svc.read.run(query)
+
     new Iterator[Entity] {
       def next(): Entity = results.next()
 
       def hasNext: Boolean = results.hasNext
-    }.map(decoder.decode(_))
+    }.map(decoder.decode(_)).toStream
   }
-}
 
-object QueryBuilder {
-  sealed trait OrderDirection
-  object OrderDirection {
-    case object Ascending extends OrderDirection
-    case object Descending extends OrderDirection
-  }
+  def run()(
+      implicit svc: Service = Service.default,
+      namespace: Namespace,
+      decoder: Decoder[T]
+  ): Stream[T] = apply()
 }
