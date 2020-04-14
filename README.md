@@ -94,15 +94,6 @@ person.save()
 and to access the `Company` value, via the `Person`, we would just call
 `person.company()`.
 
-## Limitations
-
-As this is currently just an early and incomplete release, certain obvious
-features are missing, for example,
-
-- `Option`s and other collections are not supported
-- GCP Datastore namespaces are not supported
-- the only data query currently available gets all records
-
 ## Disclaimer
 
 This is very experimental software, and should not be considered
