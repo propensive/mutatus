@@ -3,10 +3,9 @@ package mutatus.tests
 import com.google.cloud.datastore._
 import mutatus._
 import probably._
-import scala.collection.mutable
 
-case class MutatusSerializationSpec(implicit runner: Runner) {
-  import MutatusSerializationSpec.Model._
+case class SerializationSpec(implicit runner: Runner) {
+  import SerializationSpec.Model._
 
   {
     val encoder = implicitly[Encoder[Option[String]]]
@@ -20,8 +19,9 @@ case class MutatusSerializationSpec(implicit runner: Runner) {
     val decoder = implicitly[Decoder[Option[String]]]
     test("decodes optionals - empty")(decoder.decodeValue(NullValue.of()))
       .assert(_ == None)
-    test("decodes optionals - non-empty")(decoder.decodeValue(StringValue.of("content")))
-      .assert(_.contains("content"))
+    test("decodes optionals - non-empty")(
+      decoder.decodeValue(StringValue.of("content"))
+    ).assert(_.contains("content"))
   }
 
   for {
@@ -32,11 +32,12 @@ case class MutatusSerializationSpec(implicit runner: Runner) {
     encodedValue <- List(
       implicitly[Encoder[List[Int]]].encode(items.toList),
       implicitly[Encoder[Stream[Int]]].encode(items.toStream),
-      implicitly[Encoder[mutable.Buffer[Int]]].encode(items.toBuffer),
       implicitly[Encoder[Vector[Int]]].encode(items.toVector),
       implicitly[Encoder[Set[Int]]].encode(items.toSet)
     )
-  } test(s"encodes collections - ${if (items.isEmpty) "empty" else "non-empty"}")(
+  } test(
+    s"encodes collections - ${if (items.isEmpty) "empty" else "non-empty"}"
+  )(
     encodedValue
   ).assert {
     case value: ListValue => value == expected
@@ -51,11 +52,12 @@ case class MutatusSerializationSpec(implicit runner: Runner) {
     (decodedValue, expected) <- List(
       implicitly[Decoder[List[Int]]].decodeValue(listValue) -> items.toList,
       implicitly[Decoder[Stream[Int]]].decodeValue(listValue) -> items.toStream,
-      implicitly[Decoder[mutable.Buffer[Int]]].decodeValue(listValue) -> items.toBuffer,
       implicitly[Decoder[Vector[Int]]].decodeValue(listValue) -> items.toVector,
       implicitly[Decoder[Set[Int]]].decodeValue(listValue) -> items.toSet
     )
-  } test(s"decodes collections - ${if (items.isEmpty) "empty" else "non-empty"}")(
+  } test(
+    s"decodes collections - ${if (items.isEmpty) "empty" else "non-empty"}"
+  )(
     decodedValue
   ).assert(_ == expected)
 
@@ -64,15 +66,12 @@ case class MutatusSerializationSpec(implicit runner: Runner) {
     (value, expected) <- List(
       EntityState.WithoutContext -> FullEntity.newBuilder
         .set(
-          "_meta",
+          Encoder.metaField,
           EntityValue
             .newBuilder(
               FullEntity
                 .newBuilder()
-                .set(
-                  "typename",
-                  "mutatus.tests.MutatusSerializationSpec.Model.EntityState.WithoutContext"
-                )
+                .set(Encoder.typenameField, "WithoutContext")
                 .build
             )
             .setExcludeFromIndexes(true)
@@ -81,14 +80,14 @@ case class MutatusSerializationSpec(implicit runner: Runner) {
         .build,
       EntityState.WithoutContext2 -> FullEntity.newBuilder
         .set(
-          "_meta",
+          Encoder.metaField,
           EntityValue
             .newBuilder(
               FullEntity
                 .newBuilder()
                 .set(
-                  "typename",
-                  "mutatus.tests.MutatusSerializationSpec.Model.EntityState.WithoutContext2"
+                  Encoder.typenameField,
+                  "WithoutContext2"
                 )
                 .build
             )
@@ -101,14 +100,14 @@ case class MutatusSerializationSpec(implicit runner: Runner) {
         .set("param1", 123)
         .set("param2", Math.PI)
         .set(
-          "_meta",
+          Encoder.metaField,
           EntityValue
             .newBuilder(
               FullEntity
                 .newBuilder()
                 .set(
-                  "typename",
-                  "mutatus.tests.MutatusSerializationSpec.Model.EntityState.WithContext"
+                  Encoder.typenameField,
+                  "WithContext"
                 )
                 .build()
             )
@@ -118,17 +117,21 @@ case class MutatusSerializationSpec(implicit runner: Runner) {
         .build
     )
   } {
-    test("encodes sealed traits")(implicitly[Encoder[EntityState]].encode(value))
-      .assert(_ == EntityValue.of(expected))
+    test("encodes sealed traits")(
+      implicitly[Encoder[EntityState]].encode(value)
+    ).assert(_ == EntityValue.of(expected))
     test("decodes sealed traits")(
       implicitly[Decoder[EntityState]].decodeValue(EntityValue.of(expected))
     ).assert(_ == value)
   }
+
   {
-    val simple = Simple(intParam = 123,
-                        stringParam = "456",
-                        optParam = Some("777"),
-                        listParam = List("8", "9"))
+    val simple = Simple(
+      intParam = 123,
+      stringParam = "456",
+      optParam = Some("777"),
+      listParam = List("8", "9")
+    )
 
     val expectedSimpleEntity = EntityValue.of {
       Simple.builder
@@ -139,11 +142,15 @@ case class MutatusSerializationSpec(implicit runner: Runner) {
         .build()
     }
 
-    test("encodes case classes - simple")(implicitly[Encoder[Simple]].encode(simple))
-      .assert(_ == expectedSimpleEntity)
+    test("encodes case classes - simple")(
+      implicitly[Encoder[Simple]].encode(simple)
+    ).assert(_ == expectedSimpleEntity)
 
-    val complex =
-      Complex(simple = simple, optSimple = Some(simple), list = List(simple, simple))
+    val complex = Complex(
+      simple = simple,
+      optSimple = Some(simple),
+      list = List(simple, simple)
+    )
 
     val expectedComplexEntity = EntityValue.of {
       Simple.builder
@@ -154,14 +161,14 @@ case class MutatusSerializationSpec(implicit runner: Runner) {
           "state",
           FullEntity.newBuilder
             .set(
-              "_meta",
+              Encoder.metaField,
               EntityValue
                 .newBuilder(
                   FullEntity
                     .newBuilder()
                     .set(
-                      "typename",
-                      "mutatus.tests.MutatusSerializationSpec.Model.EntityState.WithoutContext"
+                      Encoder.typenameField,
+                      "WithoutContext"
                     )
                     .build
                 )
@@ -173,8 +180,9 @@ case class MutatusSerializationSpec(implicit runner: Runner) {
         .build()
     }
 
-    test("encodes case classes - complex")(implicitly[Encoder[Complex]].encode(complex))
-      .assert(_ == expectedComplexEntity)
+    test("encodes case classes - complex")(
+      implicitly[Encoder[Complex]].encode(complex)
+    ).assert(_ == expectedComplexEntity)
   }
 
   {
@@ -188,19 +196,31 @@ case class MutatusSerializationSpec(implicit runner: Runner) {
     for {
       (encoded, expected) <- List(
         EntityValue.of(entityBuilder.build) -> simple,
-        EntityValue.of(entityBuilder.setNull("optParam").build()) -> simple.copy(
-          optParam = None
-        ),
-        EntityValue.of(entityBuilder.set("optParam", "content").build()) -> simple.copy(
-          optParam = Some("content")
-        ),
+        EntityValue.of(entityBuilder.setNull("optParam").build()) -> simple
+          .copy(
+            optParam = None
+          ),
+        EntityValue
+          .of(entityBuilder.set("optParam", "content").build()) -> simple
+          .copy(optParam = Some("content")),
         EntityValue.of(
-          entityBuilder.set("listParam", ListValue.of("param1", "param2")).build()
+          entityBuilder
+            .set("listParam", ListValue.of("param1", "param2"))
+            .build()
         ) -> simple.copy(listParam = List("param1", "param2"))
       )
     } test("decodes case classes - simple")(
-      implicitly[Decoder[Simple]].decodeValue(encoded)
-    ).assert(_ == expected)
+      util.Try { implicitly[Decoder[Simple]].decodeValue(encoded) }
+    ).assert(x => {
+      val passed = x == util.Success { expected }
+      if (!passed) {
+        println(s"""Expected: ${expected}
+                   |Actual:   ${x}
+                   |Input:    ${encoded}
+        """.stripMargin)
+      }
+      passed
+    })
 
     val expectedSimple = Simple(123, "456", Some("777"), List("8", "9"))
     val simpleEncoded = Simple.builder
@@ -229,7 +249,7 @@ case class MutatusSerializationSpec(implicit runner: Runner) {
   }
 }
 
-object MutatusSerializationSpec {
+object SerializationSpec {
   object Model {
 
     sealed trait EntityState
@@ -239,10 +259,12 @@ object MutatusSerializationSpec {
       case class WithContext(param1: Int, param2: Double) extends EntityState
     }
 
-    case class Simple(intParam: Int,
-                      stringParam: String,
-                      optParam: Option[String] = None,
-                      listParam: List[String] = Nil)
+    case class Simple(
+        intParam: Int,
+        stringParam: String,
+        optParam: Option[String] = None,
+        listParam: List[String] = Nil
+    )
 
     object Simple {
       def builder: FullEntity.Builder[_] = FullEntity.newBuilder()
@@ -250,9 +272,11 @@ object MutatusSerializationSpec {
         Entity.newBuilder(Key.newBuilder("unit-tests", "simple", "1").build())
     }
 
-    case class Complex(simple: Simple,
-                       optSimple: Option[Simple] = None,
-                       list: List[Simple] = Nil,
-                       state: EntityState = EntityState.WithoutContext)
+    case class Complex(
+        simple: Simple,
+        optSimple: Option[Simple] = None,
+        list: List[Simple] = Nil,
+        state: EntityState = EntityState.WithoutContext
+    )
   }
 }

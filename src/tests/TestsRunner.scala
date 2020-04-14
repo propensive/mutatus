@@ -1,19 +1,12 @@
 package mutatus.tests
 
-import mutatus._
 import probably._
 import util.Try
-import scala.util.Failure
-import scala.util.Success
-
-import com.google.cloud.NoCredentials
-import com.google.cloud.datastore.StructuredQuery._
-import com.google.cloud.datastore._
 
 object TestsRunner extends TestApp {
   override def tests(): Unit = {
-    MutatusSerializationSpec()
-    MutatusQueryBuilderSpec()
+    SerializationSpec()
+    QueryBuilderSpec()
 
     Try(System.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
       .map { _ =>
@@ -22,7 +15,7 @@ object TestsRunner extends TestApp {
               .getOrElse(false)) {
 
           println("Running E2E tests")
-          val _ = MutatusE2ESpec()
+          val _ = EndToEndSpec()
         } else {
           println("Mutatus E2E tests disabled")
         }
