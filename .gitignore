@@ -1,4 +1,7 @@
-.bloop
-.bsp
-.fury
+.metals/*
+.bloop/*
+.bsp/*
+.fury/*
 .done
+.gitignore
+src/.metals/*
