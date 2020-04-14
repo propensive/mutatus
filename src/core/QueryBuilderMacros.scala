@@ -8,48 +8,41 @@ import mutatus.utils.BinaryTree._
 class QueryBuilderMacros(val c: blackbox.Context) {
   import c.universe._
   private val self = c.prefix
-  private val selectLikeOperators = Set("isEmpty",
-                                        "isDefined",
-                                        "last",
-                                        "lastOption",
-                                        "head",
-                                        "headOption",
-                                        "init",
-                                        "tail",
-                                        "get",
-                                        "toString")
-  private val filter = q"_root_.com.google.cloud.datastore.StructuredQuery.PropertyFilter"
+
+  private val selectLikeOperators = Set(
+    "isEmpty",
+    "isDefined",
+    "last",
+    "lastOption",
+    "head",
+    "headOption",
+    "init",
+    "tail",
+    "get",
+    "toString"
+  )
+  private val filter =
+    q"_root_.com.google.cloud.datastore.StructuredQuery.PropertyFilter"
   private val composite =
     q"_root_.com.google.cloud.datastore.StructuredQuery.CompositeFilter.and"
   private val operationMapping
-    : PartialFunction[c.Tree, (String, Option[c.Tree]) => c.Tree] = {
-    case q"==" | q"equals" =>
-      (path, args) =>
-        q"$filter.eq($path, ${args.get})"
-    case q"<" =>
-      (path, args) =>
-        q"$filter.lt($path, ${args.get})"
-    case q"<=" =>
-      (path, args) =>
-        q"$filter.le($path, ${args.get})"
-    case q">" =>
-      (path, args) =>
-        q"$filter.gt($path, ${args.get})"
-    case q">=" =>
-      (path, args) =>
-        q"$filter.ge($path, ${args.get})"
-    case q"isEmpty" =>
-      (path, args) =>
-        q"$filter.isNull($path)"
+      : PartialFunction[c.Tree, (String, Option[c.Tree]) => c.Tree] = {
+    case q"==" | q"equals" => (path, args) => q"$filter.eq($path, ${args.get})"
+    case q"<"              => (path, args) => q"$filter.lt($path, ${args.get})"
+    case q"<="             => (path, args) => q"$filter.le($path, ${args.get})"
+    case q">"              => (path, args) => q"$filter.gt($path, ${args.get})"
+    case q">="             => (path, args) => q"$filter.ge($path, ${args.get})"
+    case q"isEmpty"        => (path, args) => q"$filter.isNull($path)"
     case q"isDefined" | q"nonEmpty" =>
       (path, args) =>
         q"$filter.gt($path, _root_.com.google.cloud.datastore.NullValue.of())"
     case q"contains" | q"foreach" =>
-      (path, args) =>
-        q"$filter.eq($path, ${args.get})"
+      (path, args) => q"$filter.eq($path, ${args.get})"
   }
 
-  def whereImpl[T: c.WeakTypeTag](pred: c.Expr[T => Boolean]): c.universe.Tree = {
+  def whereImpl[T: c.WeakTypeTag](
+      pred: c.Expr[T => Boolean]
+  ): c.universe.Tree = {
     def buildQueryCondition(critera: AppliedCriteria): c.Tree = {
       val AppliedCriteria(path, operation, args) = critera
       operation
@@ -63,15 +56,16 @@ class QueryBuilderMacros(val c: blackbox.Context) {
     }
 
     CallTree(pred.tree).resolveCriteria.map(buildQueryCondition) match {
-      case Nil                    => q"$self"
-      case singleCondition :: Nil => q"$self.withFilterCriteria($singleCondition)"
+      case Nil => q"$self"
+      case singleCondition :: Nil =>
+        q"$self.withFilterCriteria($singleCondition)"
       case multipleConditions =>
         q"$self.withFilterCriteria($composite(..$multipleConditions))"
     }
   }
 
   def sortByImpl[T: c.WeakTypeTag](
-    pred: c.Tree*
+      pred: c.Tree*
   )(orderDirection: c.Tree): c.universe.Tree = {
     val sortBy: Seq[c.universe.Literal] = for {
       predicate <- pred
@@ -94,8 +88,9 @@ class QueryBuilderMacros(val c: blackbox.Context) {
   def orderByImpl[T: c.WeakTypeTag](pred: c.Tree*): c.universe.Tree = {
     val sortBy: Seq[c.Tree] = pred
       .collect {
-        case q"(..$_) => $_.asc((..$_) => $select)"  => true -> CallTree(select)
-        case q"(..$_) => $_.desc((..$_) => $select)" => false -> CallTree(select)
+        case q"(..$_) => $_.asc((..$_) => $select)" => true -> CallTree(select)
+        case q"(..$_) => $_.desc((..$_) => $select)" =>
+          false -> CallTree(select)
       }
       .flatMap {
         case (isAscending, ct) =>
@@ -113,19 +108,29 @@ class QueryBuilderMacros(val c: blackbox.Context) {
 
   private case class CallTree(tree: mutatus.utils.BinaryTree[c.Tree]) {
     def resolveCriteria: List[AppliedCriteria] = {
-      def iterate(head: mutatus.utils.BinaryTree[c.Tree],
-                  prefix: String): List[AppliedCriteria] = {
+      def iterate(
+          head: mutatus.utils.BinaryTree[c.Tree],
+          prefix: String
+      ): List[AppliedCriteria] = {
         head match {
           case Node(q"&&", l, r) => iterate(l, prefix) ++ iterate(r, prefix)
           case Node(op, path, arg) if operationMapping.isDefinedAt(op) =>
-            AppliedCriteria(buildPath(resolvePath(path), prefix),
-                            Some(op),
-                            Option(resolveArg(arg)).filterNot(_ == q"")) :: Nil
+            AppliedCriteria(
+              buildPath(resolvePath(path), prefix),
+              Some(op),
+              Option(resolveArg(arg)).filterNot(_ == q"")
+            ) :: Nil
           case Node(op, path, Empty) =>
-            AppliedCriteria(buildPath(resolvePath(path), prefix), Some(op), None) :: Nil
-          case Node(_, path, r) => iterate(r, buildPath(resolvePath(path), prefix))
-          case Leaf(v)          => AppliedCriteria(buildPath(v, prefix), None, None) :: Nil
-          case Empty            => Nil
+            AppliedCriteria(
+              buildPath(resolvePath(path), prefix),
+              Some(op),
+              None
+            ) :: Nil
+          case Node(_, path, r) =>
+            iterate(r, buildPath(resolvePath(path), prefix))
+          case Leaf(v) =>
+            AppliedCriteria(buildPath(v, prefix), None, None) :: Nil
+          case Empty => Nil
         }
       }
       iterate(tree, "")
@@ -164,13 +169,17 @@ class QueryBuilderMacros(val c: blackbox.Context) {
       tree match {
         case q"(..${_}) => ${body}" => extract(body)
         case q"$path.$calledMethod[$_](..$args)" =>
-          Node(q"$calledMethod",
-               extract(path),
-               args.headOption.map(extract).getOrElse(Empty))
+          Node(
+            q"$calledMethod",
+            extract(path),
+            args.headOption.map(extract).getOrElse(Empty)
+          )
         case q"$path.$calledMethod(..$args)" =>
-          Node(q"$calledMethod",
-               extract(path),
-               args.headOption.map(extract).getOrElse(Empty))
+          Node(
+            q"$calledMethod",
+            extract(path),
+            args.headOption.map(extract).getOrElse(Empty)
+          )
         case q"$path.${op @ TermName(name)}"
             if selectLikeOperators.contains(name) || name.head.isUpper =>
           Node(q"$op", extract(path), Empty)
@@ -179,13 +188,21 @@ class QueryBuilderMacros(val c: blackbox.Context) {
             case None => Leaf(fullPath)
             case Some(operator) =>
               val q"${lhs}.${operator}.${rhs}" = fullPath
-              Node(q"$operator", extract(lhs), extract(q"x.$rhs")) //x was add rhs to avoid removing it while building path as it is valid select
+              Node(
+                q"$operator",
+                extract(lhs),
+                extract(
+                  q"x.$rhs"
+                ) //x was add rhs to avoid removing it while building path as it is valid select
+              )
           }
       }
     }
   }
 
-  private case class AppliedCriteria(path: String,
-                                     operation: Option[c.Tree],
-                                     arg: Option[c.Tree])
+  private case class AppliedCriteria(
+      path: String,
+      operation: Option[c.Tree],
+      arg: Option[c.Tree]
+  )
 }
