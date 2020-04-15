@@ -32,7 +32,7 @@ object `package` {
 
     /** saves the all case class as a Datastore entity in batch mode */
     def saveAll()(
-        implicit svc: Service = Service.default,
+        implicit svc: Service,
         encoder: Encoder[T],
         dao: Dao[T],
         idField: IdField[T]
@@ -50,7 +50,7 @@ object `package` {
 
     /** deletes the Datastore entities in batch mode*/
     def deleteAll()(
-        implicit svc: Service = Service.default,
+        implicit svc: Service,
         dao: Dao[T],
         idField: IdField[T]
     ): Unit = {
@@ -83,7 +83,7 @@ object `package` {
 
     /** saves the case class as a Datastore entity */
     def save()(
-        implicit svc: Service = Service.default,
+        implicit svc: Service,
         encoder: Encoder[T],
         dao: Dao[T],
         idField: IdField[T]
@@ -93,7 +93,7 @@ object `package` {
 
     /** deletes the Datastore entity with this ID */
     def delete()(
-        implicit svc: Service = Service.default,
+        implicit svc: Service,
         dao: Dao[T],
         idField: IdField[T]
     ): Unit =
@@ -155,20 +155,23 @@ case class Service(readWrite: Datastore) {
 object Service {
 
   /** provides a default instance of the GCP Datastore service */
-  lazy val default: Service = Service(
+  implicit val default: Service = Service(
     DatastoreOptions.getDefaultInstance.getService
   )
 
-  /** Service instance which does not connect to any GCP Datastore, designed to be used in tests */
-  lazy val noop = Service {
-    import com.google.cloud.NoCredentials
-    DatastoreOptions
-      .newBuilder()
-      .setProjectId("noop")
-      .setCredentials(NoCredentials.getInstance())
-      .setHost("localhost")
-      .build()
-      .getService
+  object noop {
+
+    /** Service instance which does not connect to any GCP Datastore, designed to be used in tests */
+    implicit val noopService: Service = Service {
+      import com.google.cloud.NoCredentials
+      DatastoreOptions
+        .newBuilder()
+        .setProjectId("noop")
+        .setCredentials(NoCredentials.getInstance())
+        .setHost("localhost")
+        .build()
+        .getService
+    }
   }
 }
 
@@ -285,7 +288,6 @@ case class Dao[T](kind: String)(
 
   /** returns query builder with empty criteria which fetches all the values of this type stored in the GCP Platform */
   def all: QueryBuilder[T] = QueryBuilder[T](kind)
-  def query: QueryBuilder[T] = all
 
   def unapply[R](id: R)(implicit idField: IdField[T] {
     type Return = R
@@ -301,7 +303,7 @@ object Dao {
       implicit metadata: TypeMetadata[T],
       decoder: Decoder[T],
       namespace: Namespace,
-      service: Service = Service.default
+      service: Service
   ): Dao[T] = Dao(metadata.typeName)
 }
 

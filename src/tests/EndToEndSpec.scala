@@ -109,12 +109,12 @@ case class EndToEndSpec()(implicit runner: Runner) {
       }
   }
 
-  // test("fetch entities - simple")(
-  //   Dao[TestSimpleEntity].all().toVector.sortBy(_.id)
-  // ).assert(_ == (simpleEntities ++ batchedSimpleEntities).sortBy(_.id))
-  // test("fetch entities - complex - long id")(
-  //   Dao[TestComplexLongId].all().toVector.sortBy(_.id)
-  // ).assert(_ == longIdComplexEntities.sortBy(_.id))
+  test("fetch entities - simple")(
+    Dao[TestSimpleEntity].all.run.toVector.sortBy(_.id)
+  ).assert(_ == (simpleEntities ++ batchedSimpleEntities).sortBy(_.id))
+  test("fetch entities - complex - long id")(
+    Dao[TestComplexLongId].all.run.toVector.sortBy(_.id)
+  ).assert(_ == longIdComplexEntities.sortBy(_.id))
 
   simpleEntities.take(3).foreach { e =>
     test("fetch entity by id - simple")(Dao[TestSimpleEntity].unapply(e.id))
@@ -206,14 +206,14 @@ case class EndToEndSpec()(implicit runner: Runner) {
 
   test("removes entities in batch mode") {
     batchedSimpleEntities.deleteAll()
-    Dao[TestSimpleEntity].all()
+    Dao[TestSimpleEntity].all.run
   }.assert(_.isEmpty)
 
   test("removed everything") {
-    Dao[TestSimpleEntity].all() ++
-      Dao[TestComplexLongId].all() ++
-      Dao[TestComplexStringId].all() ++
-      Dao[TestComplexGuid].all()
+    Dao[TestSimpleEntity].all.run() ++
+      Dao[TestComplexLongId].all.run() ++
+      Dao[TestComplexStringId].all.run() ++
+      Dao[TestComplexGuid].all.run()
   }.assert(_.isEmpty)
 
 }

@@ -51,9 +51,11 @@ case class QueryBuilder[T] private[mutatus] (
   }
   def take(n: Int): QueryBuilder[T] = copy[T](limit = Some(n))
   def drop(n: Int): QueryBuilder[T] = copy[T](offset = Some(n))
+  def slice(offset: Int, limit: Int) =
+    copy[T](offset = Some(offset), limit = Some(limit))
 
   /** Materializes query and returns Stream of entities for GCP Storage */
-  def apply()(
+  def run()(
       implicit svc: Service = Service.default,
       namespace: Namespace,
       decoder: Decoder[T]
@@ -77,10 +79,4 @@ case class QueryBuilder[T] private[mutatus] (
       def hasNext: Boolean = results.hasNext
     }.map(decoder.decode(_)).toStream
   }
-
-  def run()(
-      implicit svc: Service = Service.default,
-      namespace: Namespace,
-      decoder: Decoder[T]
-  ): Stream[T] = apply()
 }
