@@ -27,11 +27,6 @@ import scala.util.{Success, Try}
 /** Mutatus package object */
 object `package` {
 
-  /** provides a default instance of the GCP Datastore service */
-  implicit val defaultDataStore: Service = Service(
-    DatastoreOptions.getDefaultInstance.getService
-  )
-
   /** provides `saveAll` and `deleteAll` methods for collections of case class instances */
   implicit class DataBatchExt[T <: Product](values: Traversable[T]) {
 
@@ -157,6 +152,14 @@ case class Service(readWrite: Datastore) {
   def read: DatastoreReader = readWrite
 }
 
+object Service {
+
+  /** provides a default instance of the GCP Datastore service */
+  implicit val default: Service = Service(
+    DatastoreOptions.getDefaultInstance.getService
+  )
+}
+
 /** typeclass for encoding a value into a type which can be stored in the GCP Datastore */
 trait Encoder[T] {
   def encode(value: T): Value[_]
@@ -184,7 +187,6 @@ abstract class IdField[-T] {
 }
 
 object IdField {
-
   type FindMetadataAux[T, R] = FindMetadata[id, T] { type Return = R }
 
   implicit def annotationId[T, R](implicit ann: FindMetadata[id, T] {
@@ -257,27 +259,36 @@ case class LongId(id: Long) extends IdKey {
 }
 
 /** a data access object for a particular type */
-case class Dao[T](kind: String)(implicit svc: Service, namespace: Namespace) {
+case class Dao[T](kind: String)(
+    implicit svc: Service,
+    namespace: Namespace,
+    decoder: Decoder[T]
+) {
 
   private[mutatus] lazy val keyFactory = {
     val baseFactory = svc.readWrite.newKeyFactory().setKind(kind)
     namespace.option.foldLeft(baseFactory)(_.setNamespace(_))
   }
 
-  /** returns an iterator of all the values of this type stored in the GCP Platform */
-  def all()(implicit decoder: Decoder[T]): Iterator[T] =
-    QueryBuilder(kind).find()(svc, namespace, decoder)
+  /** returns query builder with empty criteria which fetches all the values of this type stored in the GCP Platform */
+  def all: QueryBuilder[T] = QueryBuilder[T](kind)
 
-  /** returns query builder */
-  def query(implicit decoder: Decoder[T]): QueryBuilder[T] =
-    QueryBuilder[T](kind)
-
-  def unapply[R](id: R)(implicit decoder: Decoder[T], idField: IdField[T] {
+  def unapply[R](id: R)(implicit idField: IdField[T] {
     type Return = R
   }): Option[T] = {
     val key = idField.idKey(id).newKey(keyFactory)
     Try(decoder.decode(svc.read.get(key))).toOption
   }
+}
+
+/** companion object for data access objects */
+object Dao {
+  implicit def apply[T](
+      implicit metadata: TypeMetadata[T],
+      decoder: Decoder[T],
+      namespace: Namespace,
+      service: Service
+  ): Dao[T] = Dao(metadata.typeName)
 }
 
 /** companion object for `Decoder`, including Magnolia generic derivation */
@@ -474,14 +485,4 @@ trait Encoder_1 {
 
   /** generates a new `Encoder` for the type `T` */
   implicit def gen[T]: Encoder[T] = macro Magnolia.gen[T]
-}
-
-/** companion object for data access objects */
-object Dao {
-  implicit def apply[T](
-      implicit metadata: TypeMetadata[T],
-      namespace: Namespace,
-      service: Service
-  ): Dao[T] =
-    Dao(metadata.typeName)(service, namespace)
 }

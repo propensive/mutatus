@@ -40,7 +40,7 @@ class QueryBuilderMacros(val c: blackbox.Context) {
       (path, args) => q"$filter.eq($path, ${args.get})"
   }
 
-  def whereImpl[T: c.WeakTypeTag](
+  def filterImpl[T: c.WeakTypeTag](
       pred: c.Expr[T => Boolean]
   ): c.universe.Tree = {
     def buildQueryCondition(critera: AppliedCriteria): c.Tree = {
@@ -64,44 +64,12 @@ class QueryBuilderMacros(val c: blackbox.Context) {
     }
   }
 
-  def sortByImpl[T: c.WeakTypeTag](
-      pred: c.Tree*
-  )(orderDirection: c.Tree): c.universe.Tree = {
-    val sortBy: Seq[c.universe.Literal] = for {
-      predicate <- pred
-      q"(..$_) => $body" = predicate
-      AppliedCriteria(path, _, _) <- CallTree(body).resolveCriteria
-    } yield Literal(Constant(path))
-
-    q"""{
-         val isAscending = $orderDirection == _root_.mutatus.QueryBuilder.OrderDirection.Ascending
-         val sortBy: List[StructuredQuery.OrderBy] = if(isAscending){
-            List(..$sortBy).map(_root_.com.google.cloud.datastore.StructuredQuery.OrderBy.asc(_))
-          }else{
-            List(..$sortBy).map(_root_.com.google.cloud.datastore.StructuredQuery.OrderBy.desc(_))
-          }
-          $self.withSortCriteria(sortBy:_*)
-        }
-       """
-  }
-
-  def orderByImpl[T: c.WeakTypeTag](pred: c.Tree*): c.universe.Tree = {
+  def sortByImpl[T: c.WeakTypeTag](pred: c.Tree*): c.universe.Tree = {
     val sortBy: Seq[c.Tree] = pred
-      .collect {
-        case q"(..$_) => $_.asc((..$_) => $select)" => true -> CallTree(select)
-        case q"(..$_) => $_.desc((..$_) => $select)" =>
-          false -> CallTree(select)
-      }
-      .flatMap {
-        case (isAscending, ct) =>
-          ct.resolveCriteria.map {
-            case AppliedCriteria(path, _, _) =>
-              if (isAscending) {
-                q"_root_.com.google.cloud.datastore.StructuredQuery.OrderBy.asc($path)"
-              } else {
-                q"_root_.com.google.cloud.datastore.StructuredQuery.OrderBy.desc($path)"
-              }
-          }
+      .flatMap(CallTree(_).resolveCriteria)
+      .map {
+        case AppliedCriteria(path, _, _) =>
+          q"_root_.com.google.cloud.datastore.StructuredQuery.OrderBy.asc($path)"
       }
     q"$self.withSortCriteria(..$sortBy)"
   }
@@ -164,7 +132,14 @@ class QueryBuilderMacros(val c: blackbox.Context) {
   }
 
   private object CallTree {
-    def apply(tree: c.Tree): CallTree = CallTree(extract(tree))
+    def apply(tree: c.Tree): CallTree = tree match {
+      case q"(..$_) => $body" => CallTree(extract(body))
+      case _ =>
+        c.abort(
+          c.enclosingPosition,
+          "mutatus: Critieria must be passed as lambda expresion, passing values is prohibited"
+        )
+    }
     private def extract(tree: c.Tree): BinaryTree[c.Tree] = {
       tree match {
         case q"(..${_}) => ${body}" => extract(body)

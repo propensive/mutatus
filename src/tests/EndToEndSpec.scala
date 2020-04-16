@@ -110,10 +110,10 @@ case class EndToEndSpec()(implicit runner: Runner) {
   }
 
   test("fetch entities - simple")(
-    Dao[TestSimpleEntity].all().toVector.sortBy(_.id)
+    Dao[TestSimpleEntity].all.run().toVector.sortBy(_.id)
   ).assert(_ == (simpleEntities ++ batchedSimpleEntities).sortBy(_.id))
   test("fetch entities - complex - long id")(
-    Dao[TestComplexLongId].all().toVector.sortBy(_.id)
+    Dao[TestComplexLongId].all.run().toVector.sortBy(_.id)
   ).assert(_ == longIdComplexEntities.sortBy(_.id))
 
   simpleEntities.take(3).foreach { e =>
@@ -143,13 +143,14 @@ case class EndToEndSpec()(implicit runner: Runner) {
     )
 
   test("allows to fetch using queries") {
-    Dao[TestComplexLongId].query
-      .where(x =>
-        x.innerOpt.exists(_.int >= 2) && x.innerOpt.exists(_.int <= 8)
-      )
-      .orderBy(_.desc(_.innerOpt.map(_.int)))
-      .limit(limit = 2, offset = 1)
-      .find()
+    Dao[TestComplexLongId].all
+      .filter(_.innerOpt.exists(_.int >= 2))
+      .filter(_.innerOpt.exists(_.int <= 8))
+      .sortBy(_.innerOpt.map(_.int))
+      .reverse
+      .drop(1)
+      .take(2)
+      .run()
       .toList
   }.assert(
     _ == longIdComplexEntities
@@ -205,14 +206,14 @@ case class EndToEndSpec()(implicit runner: Runner) {
 
   test("removes entities in batch mode") {
     batchedSimpleEntities.deleteAll()
-    Dao[TestSimpleEntity].all()
+    Dao[TestSimpleEntity].all.run()
   }.assert(_.isEmpty)
 
   test("removed everything") {
-    Dao[TestSimpleEntity].all ++
-      Dao[TestComplexLongId].all() ++
-      Dao[TestComplexStringId].all() ++
-      Dao[TestComplexGuid].all()
+    Dao[TestSimpleEntity].all.run() ++
+      Dao[TestComplexLongId].all.run() ++
+      Dao[TestComplexStringId].all.run() ++
+      Dao[TestComplexGuid].all.run()
   }.assert(_.isEmpty)
 
 }
