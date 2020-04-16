@@ -158,21 +158,6 @@ object Service {
   implicit val default: Service = Service(
     DatastoreOptions.getDefaultInstance.getService
   )
-
-  object noop {
-
-    /** Service instance which does not connect to any GCP Datastore, designed to be used in tests */
-    implicit val noopService: Service = Service {
-      import com.google.cloud.NoCredentials
-      DatastoreOptions
-        .newBuilder()
-        .setProjectId("noop")
-        .setCredentials(NoCredentials.getInstance())
-        .setHost("localhost")
-        .build()
-        .getService
-    }
-  }
 }
 
 /** typeclass for encoding a value into a type which can be stored in the GCP Datastore */
@@ -202,7 +187,6 @@ abstract class IdField[-T] {
 }
 
 object IdField {
-
   type FindMetadataAux[T, R] = FindMetadata[id, T] { type Return = R }
 
   implicit def annotationId[T, R](implicit ann: FindMetadata[id, T] {

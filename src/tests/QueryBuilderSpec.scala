@@ -5,11 +5,22 @@ import com.google.cloud.datastore.StructuredQuery._
 import com.google.cloud.datastore._
 import mutatus._
 import probably._
-import Service.noop._
 
 case class QueryBuilderSpec()(implicit runner: Runner) {
   import QueryBuilderSpec.Model._
   lazy val builder = Dao[QueringTestEntity].all
+
+  /** Service instance which does not connect to any GCP Datastore*/
+  implicit val noopService: Service = Service {
+    import com.google.cloud.NoCredentials
+    DatastoreOptions
+      .newBuilder()
+      .setProjectId("noop")
+      .setCredentials(NoCredentials.getInstance())
+      .setHost("localhost")
+      .build()
+      .getService
+  }
 
   List(
     builder.filter(_.intParam == 0) -> PropertyFilter.eq("intParam", 0),
