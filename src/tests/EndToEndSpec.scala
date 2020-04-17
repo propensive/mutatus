@@ -85,61 +85,78 @@ case class EndToEndSpec()(implicit runner: Runner) {
       .asInstanceOf[Vector[TestComplexGuid]]
 
   simpleEntities.foreach { e =>
-    test("save entities - simple")(e.save().ref.getId()).assert(_ == e.id)
+    test("save entities - simple")(e.save().map(_.ref.getId()))
+      .assert(_ == Answer(e.id))
   }
   longIdComplexEntities.foreach { e =>
-    test("save entities - complex - long id")(e.save().ref.getId()).assert(
-      _ == e.id
-    )
+    test("save entities - complex - long id")(e.save().map(_.ref.getId()))
+      .assert(
+        _ == Answer(e.id)
+      )
   }
   stringIdComplexEntities.foreach { e =>
-    test("save entities - complex - string id")(e.save().ref.getName())
-      .assert(_ == e.id)
+    test("save entities - complex - string id")(e.save().map(_.ref.getName()))
+      .assert(_ == Answer(e.id))
   }
 
   guidComplexEntities.foreach { e =>
-    test("save entities - complex - guid")(e.save().ref.getName())
-      .assert(_ == e.id.guid)
+    test("save entities - complex - guid")(e.save().map(_.ref.getName()))
+      .assert(_ == Answer(e.id.guid))
   }
 
   test("save entites in batch mode")(batchedSimpleEntities.saveAll()).assert {
-    result =>
+    case Answer(result) =>
       result.nonEmpty && result.forall {
         case (ent, ref) => ref.ref.getId() == ent.id
       }
+    case _ => false
   }
 
   test("fetch entities - simple")(
-    Dao[TestSimpleEntity].all.run().toVector.sortBy(_.id)
-  ).assert(_ == (simpleEntities ++ batchedSimpleEntities).sortBy(_.id))
+    Dao[TestSimpleEntity].all.run()
+  ).assert {
+    case Answer(value) =>
+      value.toVector == (simpleEntities ++ batchedSimpleEntities)
+        .sortBy(_.id)
+        .map(mutatus.Answer(_))
+    case _ => false
+
+  }
+
   test("fetch entities - complex - long id")(
-    Dao[TestComplexLongId].all.run().toVector.sortBy(_.id)
-  ).assert(_ == longIdComplexEntities.sortBy(_.id))
+    Dao[TestComplexLongId].all.run()
+  ).assert {
+    case Answer(value) =>
+      value.toVector == longIdComplexEntities.toVector
+        .sortBy(_.id)
+        .map(Answer.apply)
+    case _ => false
+  }
 
   simpleEntities.take(3).foreach { e =>
     test("fetch entity by id - simple")(Dao[TestSimpleEntity].unapply(e.id))
-      .assert(_.contains(e))
+      .assert(_.contains(Answer(e)))
   }
   longIdComplexEntities
     .take(3)
     .foreach(e =>
       test("fetch entity by id - complex - longId")(
         Dao[TestComplexLongId].unapply(e.id)
-      ).assert(_.contains(e))
+      ).assert(_.contains(Answer(e)))
     )
   stringIdComplexEntities
     .take(3)
     .foreach(e =>
       test("fetch entity by id - complex - stringId")(
         Dao[TestComplexStringId].unapply(e.id)
-      ).assert(_.contains(e))
+      ).assert(_.contains(Answer(e)))
     )
   guidComplexEntities
     .take(3)
     .foreach(e =>
       test("fetch entity by id - complex - guild")(
         Dao[TestComplexGuid].unapply(e.id)
-      ).assert(_.contains(e))
+      ).assert(_.contains(Answer(e)))
     )
 
   test("allows to fetch using queries") {
@@ -151,17 +168,20 @@ case class EndToEndSpec()(implicit runner: Runner) {
       .drop(1)
       .take(2)
       .run()
-      .toList
+      .map(_.toList)
   }.assert(
-    _ == longIdComplexEntities
-      .filter(_.innerOpt.exists(_.int >= 2))
-      .filter(_.innerOpt.exists(_.int <= 8))
-      .sortBy(_.innerOpt.map(_.int).getOrElse(-1))(
-        implicitly[Ordering[Int]].reverse
-      )
-      .drop(1)
-      .take(2)
-      .toList
+    _ == Answer(
+      longIdComplexEntities
+        .filter(_.innerOpt.exists(_.int >= 2))
+        .filter(_.innerOpt.exists(_.int <= 8))
+        .sortBy(_.innerOpt.map(_.int).getOrElse(-1))(
+          implicitly[Ordering[Int]].reverse
+        )
+        .drop(1)
+        .take(2)
+        .toList
+        .map(Answer(_))
+    )
   )
 
   simpleEntities.take(5).foreach { entity =>
@@ -173,48 +193,68 @@ case class EndToEndSpec()(implicit runner: Runner) {
     test("updates entities") {
       updated.save()
       Dao[TestSimpleEntity].unapply(entity.id)
-    }.assert(_.contains(updated))
+    }.assert(_.contains(Answer(updated)))
   }
 
   simpleEntities.foreach { e =>
     test("removes entities") {
       e.delete()
-      Dao[TestSimpleEntity].unapply(e.id)
-    }.assert(_.isEmpty)
+        .map { _ => Dao[TestSimpleEntity].unapply(e.id) }
+    }.assert {
+      case Answer(value) => value.isEmpty
+      case _             => false
+    }
   }
 
   longIdComplexEntities.foreach { e =>
     test("removes entities") {
       e.delete()
-      Dao[TestComplexLongId].unapply(e.id)
-    }.assert(_.isEmpty)
+        .map { _ => Dao[TestComplexLongId].unapply(e.id) }
+    }.assert {
+      case Answer(value) => value.isEmpty
+      case _             => false
+    }
   }
 
   stringIdComplexEntities.foreach { e =>
     test("removes entities") {
-      e.delete()
-      Dao[TestComplexStringId].unapply(e.id)
-    }.assert(_.isEmpty)
+      e.delete().map { _ => Dao[TestComplexStringId].unapply(e.id) }
+    }.assert {
+      case Answer(value) => value.isEmpty
+      case _             => false
+    }
   }
 
   guidComplexEntities.foreach { e =>
     test("removes entities") {
-      e.delete()
-      Dao[TestComplexGuid].unapply(e.id)
-    }.assert(_.isEmpty)
+      e.delete().map { _ => Dao[TestComplexGuid].unapply(e.id) }
+    }.assert {
+      case Answer(value) => value.isEmpty
+      case _             => false
+    }
   }
 
   test("removes entities in batch mode") {
     batchedSimpleEntities.deleteAll()
     Dao[TestSimpleEntity].all.run()
-  }.assert(_.isEmpty)
+  }.assert {
+    case Answer(result) => result.isEmpty
+    case _              => false
+  }
 
   test("removed everything") {
-    Dao[TestSimpleEntity].all.run() ++
-      Dao[TestComplexLongId].all.run() ++
-      Dao[TestComplexStringId].all.run() ++
+    List(
+      Dao[TestSimpleEntity].all.run(),
+      Dao[TestComplexLongId].all.run(),
+      Dao[TestComplexStringId].all.run(),
       Dao[TestComplexGuid].all.run()
-  }.assert(_.isEmpty)
+    )
+  }.assert(_.forall {
+    case Answer(result) => result.isEmpty
+    case other =>
+      println(other)
+      false
+  })
 
 }
 
