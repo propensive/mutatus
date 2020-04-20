@@ -103,11 +103,14 @@ object `package` extends Domain[MutatusException] {
         encoder: Encoder[T],
         dao: Dao[T],
         idField: IdField[T]
-    ): mutatus.Result[Ref[T]] = Result {
-      new Ref[T](
-        svc.readWrite.put(buildEntity()).getKey
-      )
-    }
+    ): mutatus.Result[Ref[T]] =
+      Result {
+        new Ref[T](
+          svc.readWrite.put(buildEntity()).getKey
+        )
+      }.extenuate {
+        case exc: DatastoreException => DatabaseException(exc)
+      }
 
     /** deletes the Datastore entity with this ID */
     def delete()(
