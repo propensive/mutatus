@@ -18,10 +18,16 @@ case class SerializationSpec(implicit runner: Runner) {
   {
     val decoder = implicitly[Decoder[Option[String]]]
     test("decodes optionals - empty")(decoder.decodeValue(NullValue.of()))
-      .assert(_ == None)
+      .assert {
+        case Answer(value) => value.isEmpty
+        case _             => false
+      }
     test("decodes optionals - non-empty")(
       decoder.decodeValue(StringValue.of("content"))
-    ).assert(_.contains("content"))
+    ).assert {
+      case Answer(Some("content")) => true
+      case _                       => false
+    }
   }
 
   for {
@@ -59,7 +65,10 @@ case class SerializationSpec(implicit runner: Runner) {
     s"decodes collections - ${if (items.isEmpty) "empty" else "non-empty"}"
   )(
     decodedValue
-  ).assert(_ == expected)
+  ).assert {
+    case Answer(value) => value == expected
+    case _             => false
+  }
 
   val entityStateEncoder = implicitly[Encoder[EntityState]]
   for {
@@ -122,7 +131,10 @@ case class SerializationSpec(implicit runner: Runner) {
     ).assert(_ == EntityValue.of(expected))
     test("decodes sealed traits")(
       implicitly[Decoder[EntityState]].decodeValue(EntityValue.of(expected))
-    ).assert(_ == value)
+    ).assert {
+      case Answer(decoded) => decoded == value
+      case _               => false
+    }
   }
 
   {
@@ -210,9 +222,9 @@ case class SerializationSpec(implicit runner: Runner) {
         ) -> simple.copy(listParam = List("param1", "param2"))
       )
     } test("decodes case classes - simple")(
-      util.Try { implicitly[Decoder[Simple]].decodeValue(encoded) }
+      implicitly[Decoder[Simple]].decodeValue(encoded)
     ).assert(x => {
-      val passed = x == util.Success { expected }
+      val passed = x == Answer(expected)
       if (!passed) {
         println(s"""Expected: ${expected}
                    |Actual:   ${x}
@@ -245,7 +257,7 @@ case class SerializationSpec(implicit runner: Runner) {
 
     test("decodes case classes - complex")(
       implicitly[Decoder[Complex]].decodeValue(complexEncoded)
-    ).assert(_ == expectedComplex)
+    ).assert(_ == Answer(expectedComplex))
   }
 }
 

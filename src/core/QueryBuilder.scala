@@ -6,6 +6,7 @@ import language.experimental.macros
 import scala.collection.immutable.SortedMap
 import com.google.cloud.datastore.StructuredQuery.OrderBy.Direction
 import com.google.cloud.datastore.StructuredQuery.OrderBy
+import quarantine._
 
 case class QueryBuilder[T] private[mutatus] (
     kind: String,
@@ -59,7 +60,7 @@ case class QueryBuilder[T] private[mutatus] (
       implicit svc: Service = Service.default,
       namespace: Namespace,
       decoder: Decoder[T]
-  ): Stream[T] = {
+  ): mutatus.Result[Stream[mutatus.Result[T]]] = {
     val baseQuery = namespace.option.foldLeft(
       Query.newEntityQueryBuilder().setKind(kind)
     )(_.setNamespace(_))
@@ -71,12 +72,15 @@ case class QueryBuilder[T] private[mutatus] (
     val withOffset = offset.foldLeft(limited)(_.setOffset(_))
     val query = withOffset.build()
 
-    val results = svc.read.run(query)
+    for {
+      results <- mutatus.Result(svc.read.run(query))
+      entities = new Iterator[Entity] {
+        def next(): Entity = results.next()
 
-    new Iterator[Entity] {
-      def next(): Entity = results.next()
-
-      def hasNext: Boolean = results.hasNext
-    }.map(decoder.decode(_)).toStream
+        def hasNext: Boolean = results.hasNext
+      }.toStream
+    } yield entities.map(decoder.decode)
+  }.extenuate {
+    case exc: DatastoreException => DatabaseException(exc)
   }
 }
