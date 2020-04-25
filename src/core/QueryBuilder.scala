@@ -7,73 +7,66 @@ import scala.collection.immutable.SortedMap
 import com.google.cloud.datastore.StructuredQuery.OrderBy.Direction
 import com.google.cloud.datastore.StructuredQuery.OrderBy
 import quarantine._
+import scala.reflect.runtime.universe.WeakTypeTag
+import io.opencensus.common.ServerStatsFieldEnums.Id
+import scala.annotation.implicitNotFound
 
-case class QueryBuilder[T] private[mutatus] (
-    kind: String,
+case class Query(
     filterCriteria: Option[Filter] = None,
     orderCriteria: List[StructuredQuery.OrderBy] = Nil,
     offset: Option[Int] = None,
     limit: Option[Int] = None
-) {
-  // Following 2 methods would not be necessary in case if we could access private members of QueryBuilder inside macro evalulation
-  def withSortCriteria(orders: StructuredQuery.OrderBy*): QueryBuilder[T] = {
-    copy[T](orderCriteria = orders.foldLeft(orderCriteria) {
-      case (acc, order) =>
-        order :: acc.filterNot(_.getProperty() == order.getProperty())
-    })
-  }
+)
 
-  def withFilterCriteria(filters: StructuredQuery.Filter*): QueryBuilder[T] =
-    copy[T](
-      filterCriteria = Option((filterCriteria ++ filters).toList.distinct)
-        .filter(_.nonEmpty)
-        .map {
-          case singleFilter :: Nil => singleFilter
-          case multiple =>
-            StructuredQuery.CompositeFilter
-              .and(multiple.head, multiple.tail: _*)
-        }
-    )
+class QueryBuilder[T: WeakTypeTag](
+    val kind: String,
+    val query: Query = Query()
+) extends {
+  type IdxDef <: mutatus.IndexDef
+  final type Idx = Index[T, IdxDef]
+  val self = this
+
+  def filterCriteria: Option[Filter] = query.filterCriteria
+  def orderCriteria: List[StructuredQuery.OrderBy] = query.orderCriteria
+  def offset: Option[Int] = query.offset
+  def limit: Option[Int] = query.limit
 
   def filter(pred: T => Boolean): QueryBuilder[T] =
     macro QueryBuilderMacros.filterImpl[T]
   def sortBy(pred: (T => Any)*): QueryBuilder[T] =
     macro QueryBuilderMacros.sortByImpl[T]
 
-  def reverse: QueryBuilder[T] = {
-    val reversedOrder = orderCriteria.map { critieria =>
-      val newOrderFn = critieria.getDirection() match {
-        case Direction.ASCENDING  => OrderBy.desc _
-        case Direction.DESCENDING => OrderBy.asc _
-      }
-      newOrderFn(critieria.getProperty)
-    }
-    copy[T](orderCriteria = reversedOrder)
+  def reverse: QueryBuilder[T] = macro QueryBuilderMacros.reverseImpl[T]
+
+  def take(n: Int) = new QueryBuilder[T](kind, query.copy(limit = Some(n))) {
+    type IdxDef = self.IdxDef
   }
-  def take(n: Int): QueryBuilder[T] = copy[T](limit = Some(n))
-  def drop(n: Int): QueryBuilder[T] = copy[T](offset = Some(n))
-  def slice(offset: Int, limit: Int) =
-    copy[T](offset = Some(offset), limit = Some(limit))
+  def drop(n: Int) = new QueryBuilder[T](kind, query.copy(offset = Some(n))) {
+    type IdxDef = self.IdxDef
+  }
+
+  def slice(offset: Int, limit: Int) = drop(offset).take(limit)
 
   /** Materializes query and returns Stream of entities for GCP Storage */
   def run()(
       implicit svc: Service = Service.default,
       namespace: Namespace,
-      decoder: Decoder[T]
+      decoder: Decoder[T],
+      ev: Schema[Idx]
   ): mutatus.Result[Stream[mutatus.Result[T]]] = {
     val baseQuery = namespace.option.foldLeft(
-      Query.newEntityQueryBuilder().setKind(kind)
+      datastore.Query.newEntityQueryBuilder().setKind(kind)
     )(_.setNamespace(_))
-    val filtered = filterCriteria.foldLeft(baseQuery)(_.setFilter(_))
-    val ordered = orderCriteria.headOption.foldLeft(filtered)(
-      _.setOrderBy(_, orderCriteria.tail: _*)
+    val filtered = query.filterCriteria.foldLeft(baseQuery)(_.setFilter(_))
+    val ordered = query.orderCriteria.headOption.foldLeft(filtered)(
+      _.setOrderBy(_, query.orderCriteria.tail: _*)
     )
-    val limited = limit.foldLeft(ordered)(_.setLimit(_))
-    val withOffset = offset.foldLeft(limited)(_.setOffset(_))
-    val query = withOffset.build()
+    val limited = query.limit.foldLeft(ordered)(_.setLimit(_))
+    val withOffset = query.offset.foldLeft(limited)(_.setOffset(_))
+    val finalQuery = withOffset.build()
 
     for {
-      results <- mutatus.Result(svc.read.run(query))
+      results <- mutatus.Result(svc.read.run(finalQuery))
       entities = new Iterator[Entity] {
         def next(): Entity = results.next()
 

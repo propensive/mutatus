@@ -5,6 +5,8 @@ import com.google.cloud.datastore.StructuredQuery._
 import com.google.cloud.datastore._
 import mutatus._
 import probably._
+import mutatus.OrderDirection._
+import language.higherKinds
 
 case class QueryBuilderSpec()(implicit runner: Runner) {
   import QueryBuilderSpec.Model._
@@ -21,6 +23,30 @@ case class QueryBuilderSpec()(implicit runner: Runner) {
       .build()
       .getService
   }
+
+  implicit val idx = Schema.load(
+    DatastoreIndex[QueringTestEntity](
+      ("intParam", OrderDirection.Descending),
+      ("innerClass.intParam", OrderDirection.Ascending)
+    ),
+    DatastoreIndex[QueringTestEntity](
+      ("intParam", OrderDirection.Ascending),
+      ("innerClass.intParam", OrderDirection.Descending),
+      ("innerClass.decimalParam", OrderDirection.Ascending)
+    )
+  )
+
+  Dao[QueringTestEntity].all
+    .filter(_.intParam == 0)
+    .filter(_.innerClass.intParam == 1)
+    .filter(_.innerClass.intParam < 2)
+    .filter(_.intParam >= 1)
+    .sortBy(_.intParam)
+    .reverse
+    .sortBy(_.innerClass.intParam)
+    .reverse
+    .filter(_.innerClass.decimalParam == 2.0)
+    .run()
 
   List(
     builder.filter(_.intParam == 0) -> PropertyFilter.eq("intParam", 0),

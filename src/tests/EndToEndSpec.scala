@@ -112,26 +112,25 @@ case class EndToEndSpec()(implicit runner: Runner) {
     case _ => false
   }
 
-  test("fetch entities - simple")(
-    Dao[TestSimpleEntity].all.run()
-  ).assert {
-    case Answer(value) =>
-      value.toVector == (simpleEntities ++ batchedSimpleEntities)
-        .sortBy(_.id)
-        .map(mutatus.Answer(_))
-    case _ => false
+//   test("fetch entities - simple")(
+//     Dao[TestSimpleEntity].all.run()
+//   ).assert {
+//     case Answer(value) =>
+//       value.toVector == (simpleEntities ++ batchedSimpleEntities)
+//         .sortBy(_.id)
+//         .map(mutatus.Answer(_))
+//     case _ => false
+//   }
 
-  }
-
-  test("fetch entities - complex - long id")(
-    Dao[TestComplexLongId].all.run()
-  ).assert {
-    case Answer(value) =>
-      value.toVector == longIdComplexEntities.toVector
-        .sortBy(_.id)
-        .map(Answer.apply)
-    case _ => false
-  }
+//   test("fetch entities - complex - long id")(
+//     Dao[TestComplexLongId].all.run()
+//   ).assert {
+//     case Answer(value) =>
+//       value.toVector == longIdComplexEntities.toVector
+//         .sortBy(_.id)
+//         .map(Answer.apply)
+//     case _ => false
+//   }
 
   simpleEntities.take(3).foreach { e =>
     test("fetch entity by id - simple")(Dao[TestSimpleEntity].unapply(e.id))
@@ -158,31 +157,30 @@ case class EndToEndSpec()(implicit runner: Runner) {
         Dao[TestComplexGuid].unapply(e.id)
       ).assert(_.contains(Answer(e)))
     )
-
-  test("allows to fetch using queries") {
-    Dao[TestComplexLongId].all
-      .filter(_.innerOpt.exists(_.int >= 2))
-      .filter(_.innerOpt.exists(_.int <= 8))
-      .sortBy(_.innerOpt.map(_.int))
-      .reverse
-      .drop(1)
-      .take(2)
-      .run()
-      .map(_.toList)
-  }.assert(
-    _ == Answer(
-      longIdComplexEntities
-        .filter(_.innerOpt.exists(_.int >= 2))
-        .filter(_.innerOpt.exists(_.int <= 8))
-        .sortBy(_.innerOpt.map(_.int).getOrElse(-1))(
-          implicitly[Ordering[Int]].reverse
-        )
-        .drop(1)
-        .take(2)
-        .toList
-        .map(Answer(_))
-    )
-  )
+//   test("allows to fetch using queries") {
+//     Dao[TestComplexLongId].all
+//       .filter(_.innerOpt.exists(_.int >= 2))
+//       .filter(_.innerOpt.exists(_.int <= 8))
+//       .sortBy(_.innerOpt.map(_.int))
+//       .reverse
+//       .drop(1)
+//       .take(2)
+//       .run()
+//       .map(_.toList)
+//   }.assert(
+//     _ == Answer(
+//       longIdComplexEntities
+//         .filter(_.innerOpt.exists(_.int >= 2))
+//         .filter(_.innerOpt.exists(_.int <= 8))
+//         .sortBy(_.innerOpt.map(_.int).getOrElse(-1))(
+//           implicitly[Ordering[Int]].reverse
+//         )
+//         .drop(1)
+//         .take(2)
+//         .toList
+//         .map(Answer(_))
+//     )
+//   )
 
   simpleEntities.take(5).foreach { entity =>
     val updated = entity.copy(
@@ -234,27 +232,27 @@ case class EndToEndSpec()(implicit runner: Runner) {
     }
   }
 
-  test("removes entities in batch mode") {
-    batchedSimpleEntities.deleteAll()
-    Dao[TestSimpleEntity].all.run()
-  }.assert {
-    case Answer(result) => result.isEmpty
-    case _              => false
-  }
+//   test("removes entities in batch mode") {
+//     batchedSimpleEntities.deleteAll()
+//     Dao[TestSimpleEntity].all.run()
+//   }.assert {
+//     case Answer(result) => result.isEmpty
+//     case _              => false
+//   }
 
-  test("removed everything") {
-    List(
-      Dao[TestSimpleEntity].all.run(),
-      Dao[TestComplexLongId].all.run(),
-      Dao[TestComplexStringId].all.run(),
-      Dao[TestComplexGuid].all.run()
-    )
-  }.assert(_.forall {
-    case Answer(result) => result.isEmpty
-    case other =>
-      println(other)
-      false
-  })
+//   test("removed everything") {
+//     List(
+//       Dao[TestSimpleEntity].all.run(),
+//       Dao[TestComplexLongId].all.run(),
+//       Dao[TestComplexStringId].all.run(),
+//       Dao[TestComplexGuid].all.run()
+//     )
+//   }.assert(_.forall {
+//     case Answer(result) => result.isEmpty
+//     case other =>
+//       println(other)
+//       false
+//   })
 
 }
 

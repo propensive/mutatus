@@ -4,8 +4,12 @@ import scala.annotation.tailrec
 import scala.reflect.macros._
 import mutatus.utils.BinaryTree
 import mutatus.utils.BinaryTree._
+import java.io.FileWriter
+import scala.collection.immutable.Nil
+import io.opencensus.common.ServerStatsFieldEnums.Id
+import scala.reflect.api.Scopes
 
-class QueryBuilderMacros(val c: blackbox.Context) {
+class QueryBuilderMacros(val c: whitebox.Context) {
   import c.universe._
   private val self = c.prefix
 
@@ -25,6 +29,9 @@ class QueryBuilderMacros(val c: blackbox.Context) {
     q"_root_.com.google.cloud.datastore.StructuredQuery.PropertyFilter"
   private val composite =
     q"_root_.com.google.cloud.datastore.StructuredQuery.CompositeFilter.and"
+  private val orderBy =
+    q"_root_.com.google.cloud.datastore.StructuredQuery.OrderBy"
+
   private val operationMapping
       : PartialFunction[c.Tree, (String, Option[c.Tree]) => c.Tree] = {
     case q"==" | q"equals" => (path, args) => q"$filter.eq($path, ${args.get})"
@@ -54,24 +61,134 @@ class QueryBuilderMacros(val c: blackbox.Context) {
           )
         )
     }
-
-    CallTree(pred.tree).resolveCriteria.map(buildQueryCondition) match {
-      case Nil => q"$self"
-      case singleCondition :: Nil =>
-        q"$self.withFilterCriteria($singleCondition)"
-      case multipleConditions =>
-        q"$self.withFilterCriteria($composite(..$multipleConditions))"
+    val criteria = CallTree(pred.tree).resolveCriteria
+    val newFilters = criteria.map(buildQueryCondition) match {
+      case Nil           => None
+      case single :: Nil => Some(single)
+      case multiple      => Some(q"$composite(..$multiple)")
     }
+
+    val idxDef: CompoundTypeTree =
+      self.actualType.member("IdxDef": TypeName).info match {
+        case tpe: CompoundTypeTree => tpe
+        case tpe                   => tq"$tpe with _root_.mutatus.IndexDef"
+      }
+
+    val newIdxDef = criteria
+      .foldLeft(idxDef) {
+        case (tpe, c) =>
+          tq"$tpe with _root_.mutatus.Property[${q"${c.path}"}, _root_.mutatus.OrderDirection]"
+      }
+
+    newFilters
+      .map { newFilter =>
+        q"""{
+          val current = $self
+          new QueryBuilder[${weakTypeOf[T]}](
+            current.kind,
+            current.query.copy(
+            filterCriteria = current.filterCriteria
+              .map($composite(_, $newFilter))
+              .orElse(Some($newFilter))
+            )
+          ){
+            type IdxDef = ${newIdxDef}
+          }
+        }"""
+      }
+      .getOrElse(q"$self")
+  }
+
+  def loadIndexesImpl(
+      indexes: c.Tree*
+  ): c.Tree = {
+    val composite = indexes.map {
+        case q"mutatus.DatastoreIndex.apply[$entityType](..$properties)" =>
+          val idxDef = properties.foldLeft(tq"_root_.mutatus.IndexDef with _root_.scala.Singleton") {
+            case (tpe, q"scala.Tuple2.apply[..$_]($path, $direction)") => 
+            tq"$tpe with _root_.mutatus.Property[$path, $direction]"
+          }
+          tq"_root_.mutatus.Index[$entityType, $idxDef]"
+      }
+      .reduce[c.Tree] {
+        case (tq"$lhs", tq"$rhs") => tq"$lhs with $rhs"
+      }
+    q"""new _root_.mutatus.Schema[$composite]{}"""
   }
 
   def sortByImpl[T: c.WeakTypeTag](pred: c.Tree*): c.universe.Tree = {
-    val sortBy: Seq[c.Tree] = pred
-      .flatMap(CallTree(_).resolveCriteria)
+
+    val criteria = pred.flatMap(CallTree(_).resolveCriteria)
+    val sortBy: Seq[c.Tree] = criteria
       .map {
-        case AppliedCriteria(path, _, _) =>
-          q"_root_.com.google.cloud.datastore.StructuredQuery.OrderBy.asc($path)"
+        case AppliedCriteria(path, _, _) => q"$orderBy.asc($path)"
       }
-    q"$self.withSortCriteria(..$sortBy)"
+
+    val idxDef: CompoundTypeTree =
+      self.actualType.member("IdxDef": TypeName).info match {
+        case tpe: CompoundTypeTree => tpe
+        case tpe                   => tq"$tpe with _root_.mutatus.IndexDef"
+      }
+
+    val newIdxDef = criteria
+      .foldLeft(idxDef) {
+        case (tpe, ac) =>
+          tq"$tpe with _root_.mutatus.Property[${q"${ac.path}"}, _root_.mutatus.OrderDirection.Ascending.type]"
+      }
+
+    q"""{
+      val current = $self
+      val newOrder = List(..$sortBy).foldLeft(current.orderCriteria){
+        case (acc, orderBy) => orderBy :: acc.filterNot(_.getProperty() == orderBy.getProperty()) 
+      }
+
+      new QueryBuilder[${weakTypeOf[T]}](current.kind, current.query.copy(orderCriteria = newOrder)){
+        type IdxDef = $newIdxDef
+      }
+    }
+    """
+  }
+
+  def reverseImpl[T: c.WeakTypeTag]: c.universe.Tree = {
+    import compat._
+
+    val symbolAscending = symbolOf[mutatus.OrderDirection.Ascending.type]
+    val symbolDescedning = symbolOf[mutatus.OrderDirection.Descending.type]
+
+    val tpe = self.actualType
+      .member("IdxDef": TypeName)
+      .typeSignatureIn(self.actualType)
+      .normalize
+    val newIdxDef = tpe match {
+      case RefinedType(parents, scope) =>
+        val fixed = parents.collect {
+          case original @ TypeRef(pre, sym, path :: orderType :: Nil) =>
+            show(orderType) match {
+              case "mutatus.OrderDirection.Ascending.type" =>
+                TypeRef(pre, sym, path :: symbolDescedning.toType :: Nil)
+              case "mutatus.OrderDirection.Descending.type" =>
+                TypeRef(pre, sym, path :: symbolAscending.toType :: Nil)
+              case other => original
+            }
+          case other => other
+        }
+        tq"${RefinedType(fixed, scope)}"
+    }
+
+    q"""{
+      val current = $self
+      val reversedOrder = current.query.orderCriteria.map { critieria =>
+        val newOrderFn = critieria.getDirection() match {
+          case $orderBy.Direction.ASCENDING  => $orderBy.desc _
+          case $orderBy.Direction.DESCENDING => $orderBy.asc _
+        }
+        newOrderFn(critieria.getProperty)
+      }
+      new QueryBuilder[${weakTypeOf[T]}](current.kind, current.query.copy(orderCriteria = reversedOrder)) {
+        type IdxDef = ${newIdxDef}
+      }
+  }
+  """
   }
 
   private case class CallTree(tree: mutatus.utils.BinaryTree[c.Tree]) {

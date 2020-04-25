@@ -22,6 +22,7 @@ import mercator._
 
 import scala.annotation.StaticAnnotation
 import scala.collection.JavaConverters._
+import scala.reflect.runtime.universe.WeakTypeTag
 import scala.collection.generic.CanBuildFrom
 import scala.language.experimental.macros
 import io.opencensus.trace.Status.CanonicalCode
@@ -290,7 +291,7 @@ case class LongId(id: Long) extends IdKey {
 }
 
 /** a data access object for a particular type */
-case class Dao[T](kind: String)(
+case class Dao[T: WeakTypeTag](kind: String)(
     implicit svc: Service,
     namespace: Namespace,
     decoder: Decoder[T]
@@ -302,7 +303,9 @@ case class Dao[T](kind: String)(
   }
 
   /** returns query builder with empty criteria which fetches all the values of this type stored in the GCP Platform */
-  def all: QueryBuilder[T] = QueryBuilder[T](kind)
+  def all = new QueryBuilder[T](kind, Query()) {
+    type IdxDef = mutatus.IndexDef
+  }
 
   def unapply[R](id: R)(implicit idField: IdField[T] {
     type Return = R
