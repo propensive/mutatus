@@ -5,13 +5,10 @@ import scala.reflect.macros._
 import mutatus.utils.BinaryTree
 import mutatus.utils.BinaryTree._
 import java.io.FileWriter
-import scala.collection.immutable.Nil
-import io.opencensus.common.ServerStatsFieldEnums.Id
-import scala.reflect.api.Scopes
 
 class QueryBuilderMacros(val c: whitebox.Context) {
   import c.universe._
-  private val self = c.prefix
+  private val self = c.prefix.asInstanceOf[c.Expr[QueryBuilder[_]]]
 
   private val selectLikeOperators = Set(
     "isEmpty",
@@ -25,15 +22,17 @@ class QueryBuilderMacros(val c: whitebox.Context) {
     "get",
     "toString"
   )
-  private val filter =
-    q"_root_.com.google.cloud.datastore.StructuredQuery.PropertyFilter"
-  private val composite =
-    q"_root_.com.google.cloud.datastore.StructuredQuery.CompositeFilter.and"
-  private val orderBy =
-    q"_root_.com.google.cloud.datastore.StructuredQuery.OrderBy"
+  private val filter = q"_root_.com.google.cloud.datastore.StructuredQuery.PropertyFilter"
+  private val composite = q"_root_.com.google.cloud.datastore.StructuredQuery.CompositeFilter.and"
+  private val orderBy = q"_root_.com.google.cloud.datastore.StructuredQuery.OrderBy"
+  
+  final val AscendingOrder = tq"_root_.mutatus.OrderDirection.Ascending.type"
+  final val DescendingOrder = tq"_root_.mutatus.OrderDirection.Descending.type"
+  final val InequalityFiltered = tq"_root_.mutatus.InequalityFiltered"
+  final val EqualityFiltered = tq"_root_.mutatus.EqualityFiltered"
 
-  private val operationMapping
-      : PartialFunction[c.Tree, (String, Option[c.Tree]) => c.Tree] = {
+  private val equalityOperators: Set[c.Tree] = Set(q"==", q"equals", q"isEmpty", q"contains", q"foreach")
+  private val operationMapping: PartialFunction[c.Tree, (String, Option[c.Tree]) => c.Tree] = {
     case q"==" | q"equals" => (path, args) => q"$filter.eq($path, ${args.get})"
     case q"<"              => (path, args) => q"$filter.lt($path, ${args.get})"
     case q"<="             => (path, args) => q"$filter.le($path, ${args.get})"
@@ -47,6 +46,15 @@ class QueryBuilderMacros(val c: whitebox.Context) {
       (path, args) => q"$filter.eq($path, ${args.get})"
   }
 
+  private val idxDef = self.tree.collect{
+      case q"type FullIdxDef = $tpt" => tpt
+    }.lastOption.map{
+      case tpe @ TypeTree() if tpe.original != null => tpe.original
+      case tpe => tpe  
+    }.map{
+      case tpe: CompoundTypeTree => tpe
+    }.getOrElse(tq"_root_.mutatus.SimpleIndexDef")
+  
   def filterImpl[T: c.WeakTypeTag](
       pred: c.Expr[T => Boolean]
   ): c.universe.Tree = {
@@ -61,6 +69,7 @@ class QueryBuilderMacros(val c: whitebox.Context) {
           )
         )
     }
+
     val criteria = CallTree(pred.tree).resolveCriteria
     val newFilters = criteria.map(buildQueryCondition) match {
       case Nil           => None
@@ -68,16 +77,41 @@ class QueryBuilderMacros(val c: whitebox.Context) {
       case multiple      => Some(q"$composite(..$multiple)")
     }
 
-    val idxDef: CompoundTypeTree =
-      self.actualType.member("IdxDef": TypeName).info match {
-        case tpe: CompoundTypeTree => tpe
-        case tpe                   => tq"$tpe with _root_.mutatus.IndexDef"
-      }
-
-    val newIdxDef = criteria
+    lazy val newIdxDef = criteria
       .foldLeft(idxDef) {
-        case (tpe, c) =>
-          tq"$tpe with _root_.mutatus.Property[${q"${c.path}"}, _root_.mutatus.OrderDirection]"
+        case (tpe, ac) =>
+          val pathLiteral = tq"${ac.path}"
+          
+          def usesEqualityOperator = ac.operation.forall(op => equalityOperators.exists(_.equalsStructure(op))) 
+          val equalityOperator = if(usesEqualityOperator) EqualityFiltered else InequalityFiltered
+
+          val (checkedParts, appliesToCritieria) = compoundTypeParents(tpe).collect{
+            case property @ tq"_root_.mutatus.Property[$path, $order]" => 
+              val params = compoundTypeParents(path)
+              
+              val matchesCriteriaPath = params.exists(_.equalsStructure(tq"$pathLiteral"))
+              val containsEqualityOperator = params.exists{param => 
+                List(InequalityFiltered, EqualityFiltered).exists(_.equalsStructure(param))
+              }
+
+              if(matchesCriteriaPath)
+                if(containsEqualityOperator){
+                  val updatedParam = params.collect{
+                    case tpe if tpe.equalsStructure(InequalityFiltered) => InequalityFiltered
+                    case tpe if tpe.equalsStructure(EqualityFiltered) => equalityOperator
+                    case other => other
+                  }.reduce[c.Tree]{case (lhs, rhs) => tq"$lhs with $rhs"}
+                  tq"_root_.mutatus.Property[$updatedParam, $order]" -> true
+                } else tq"_root_.mutatus.Property[$path with $equalityOperator, $order]" -> true 
+              else property -> false
+
+            case other => other -> false
+          }.unzip
+
+          val allParts = if(appliesToCritieria.exists(_ == true)) checkedParts
+            else checkedParts :+ tq"_root_.mutatus.Property[$pathLiteral with $equalityOperator, _root_.mutatus.OrderDirection]"
+          
+          buildNewIndexDef(allParts)
       }
 
     newFilters
@@ -92,31 +126,16 @@ class QueryBuilderMacros(val c: whitebox.Context) {
               .orElse(Some($newFilter))
             )
           ){
-            type IdxDef = ${newIdxDef}
+            type IdxDef = ${simplifyIndexDef(newIdxDef)}
+            type FullIdxDef = ${newIdxDef}
           }
         }"""
       }
       .getOrElse(q"$self")
   }
 
-  def loadIndexesImpl(
-      indexes: c.Tree*
-  ): c.Tree = {
-    val composite = indexes.map {
-        case q"mutatus.DatastoreIndex.apply[$entityType](..$properties)" =>
-          val idxDef = properties.foldLeft(tq"_root_.mutatus.IndexDef with _root_.scala.Singleton") {
-            case (tpe, q"scala.Tuple2.apply[..$_]($path, $direction)") => 
-            tq"$tpe with _root_.mutatus.Property[$path, $direction]"
-          }
-          tq"_root_.mutatus.Index[$entityType, $idxDef]"
-      }
-      .reduce[c.Tree] {
-        case (tq"$lhs", tq"$rhs") => tq"$lhs with $rhs"
-      }
-    q"""new _root_.mutatus.Schema[$composite]{}"""
-  }
-
-  def sortByImpl[T: c.WeakTypeTag](pred: c.Tree*): c.universe.Tree = {
+   def sortByImpl[T: c.WeakTypeTag](pred: c.Tree*): c.universe.Tree = {
+    val Sortable = tq"_root_.mutatus.Sortable"
 
     val criteria = pred.flatMap(CallTree(_).resolveCriteria)
     val sortBy: Seq[c.Tree] = criteria
@@ -124,16 +143,27 @@ class QueryBuilderMacros(val c: whitebox.Context) {
         case AppliedCriteria(path, _, _) => q"$orderBy.asc($path)"
       }
 
-    val idxDef: CompoundTypeTree =
-      self.actualType.member("IdxDef": TypeName).info match {
-        case tpe: CompoundTypeTree => tpe
-        case tpe                   => tq"$tpe with _root_.mutatus.IndexDef"
-      }
-
-    val newIdxDef = criteria
+    lazy val newIdxDef = criteria
       .foldLeft(idxDef) {
         case (tpe, ac) =>
-          tq"$tpe with _root_.mutatus.Property[${q"${ac.path}"}, _root_.mutatus.OrderDirection.Ascending.type]"
+        val pathLiteral = tq"${ac.path}"
+        val (checkedParts, appliesToCritieria) = compoundTypeParents(tpe).collect{
+          case property @ tq"_root_.mutatus.Property[$path, $order]" => 
+            val params = compoundTypeParents(path)
+            val matchesCriteriaPath = params.exists(_.equalsStructure(pathLiteral))
+            val hasSortableCrtieria = params.exists(_.equalsStructure(Sortable))
+
+            if(matchesCriteriaPath && !hasSortableCrtieria)
+              tq"_root_.mutatus.Property[$path with $Sortable, $AscendingOrder]" -> true
+            else property -> false
+
+          case other => other -> false
+        }.unzip
+
+        val allParts = if(appliesToCritieria.exists(_ == true)) checkedParts
+        else checkedParts :+ tq"_root_.mutatus.Property[$pathLiteral with _root_.mutatus.Sortable, _root_.mutatus.OrderDirection.Ascending.type]"
+        
+        buildNewIndexDef(allParts)
       }
 
     q"""{
@@ -141,54 +171,41 @@ class QueryBuilderMacros(val c: whitebox.Context) {
       val newOrder = List(..$sortBy).foldLeft(current.orderCriteria){
         case (acc, orderBy) => orderBy :: acc.filterNot(_.getProperty() == orderBy.getProperty()) 
       }
-
       new QueryBuilder[${weakTypeOf[T]}](current.kind, current.query.copy(orderCriteria = newOrder)){
-        type IdxDef = $newIdxDef
-      }
-    }
-    """
+        type IdxDef = ${simplifyIndexDef(newIdxDef)}
+        type FullIdxDef = ${newIdxDef}      }
+    }"""
   }
 
   def reverseImpl[T: c.WeakTypeTag]: c.universe.Tree = {
-    import compat._
+    val newIdxDef = compoundTypeParents(idxDef).map{
+      case tq"_root_.mutatus.Property[$path, $order]" =>
+        val newPropertyOrder = 
+          if(order.equalsStructure(AscendingOrder)) DescendingOrder
+          else if(order.equalsStructure(DescendingOrder)) AscendingOrder
+          else order
+          tq"_root_.mutatus.Property[$path, $newPropertyOrder]"
 
-    val symbolAscending = symbolOf[mutatus.OrderDirection.Ascending.type]
-    val symbolDescedning = symbolOf[mutatus.OrderDirection.Descending.type]
-
-    val tpe = self.actualType
-      .member("IdxDef": TypeName)
-      .typeSignatureIn(self.actualType)
-      .normalize
-    val newIdxDef = tpe match {
-      case RefinedType(parents, scope) =>
-        val fixed = parents.collect {
-          case original @ TypeRef(pre, sym, path :: orderType :: Nil) =>
-            show(orderType) match {
-              case "mutatus.OrderDirection.Ascending.type" =>
-                TypeRef(pre, sym, path :: symbolDescedning.toType :: Nil)
-              case "mutatus.OrderDirection.Descending.type" =>
-                TypeRef(pre, sym, path :: symbolAscending.toType :: Nil)
-              case other => original
-            }
           case other => other
-        }
-        tq"${RefinedType(fixed, scope)}"
+    }
+    .reduceLeft[c.Tree]{
+      case (tpe, part) => tq"$tpe with $part"
     }
 
-    q"""{
-      val current = $self
-      val reversedOrder = current.query.orderCriteria.map { critieria =>
-        val newOrderFn = critieria.getDirection() match {
-          case $orderBy.Direction.ASCENDING  => $orderBy.desc _
-          case $orderBy.Direction.DESCENDING => $orderBy.asc _
+      q"""{
+        val current = $self
+        val reversedOrder = current.query.orderCriteria.map { critieria =>
+          val newOrderFn = critieria.getDirection() match {
+            case $orderBy.Direction.ASCENDING  => $orderBy.desc _
+            case $orderBy.Direction.DESCENDING => $orderBy.asc _
+          }
+          newOrderFn(critieria.getProperty)
         }
-        newOrderFn(critieria.getProperty)
-      }
-      new QueryBuilder[${weakTypeOf[T]}](current.kind, current.query.copy(orderCriteria = reversedOrder)) {
-        type IdxDef = ${newIdxDef}
-      }
-  }
-  """
+        new QueryBuilder[${weakTypeOf[T]}](current.kind, current.query.copy(orderCriteria = reversedOrder)) {
+          type IdxDef = ${simplifyIndexDef(newIdxDef)}
+          type FullIdxDef = ${newIdxDef}
+        }
+    }"""
   }
 
   private case class CallTree(tree: mutatus.utils.BinaryTree[c.Tree]) {
@@ -297,4 +314,75 @@ class QueryBuilderMacros(val c: whitebox.Context) {
       operation: Option[c.Tree],
       arg: Option[c.Tree]
   )
+
+  private def compoundTypeParents(tpe: c.Tree): List[c.Tree] = tpe match {
+    case tq"..$parents {}" => parents.flatMap(compoundTypeParents)
+    case parent => parent :: Nil
+  }
+
+  /** Builds IndexDefinition based on included parts. Validates query and resolves does it need Complex or Simple Index
+   * Complex Query cases:
+   * - Queries with ancestor and inequality filters (TODO)
+   * - Queries with one or more inequality filters on a property and one or more equality filters on other properties
+   * - Queries with a sort order on keys in descending order
+   * - Queries with multiple sort orders
+   * - Queries with one or more filters and one or more sort orders
+   * */ 
+  private def buildNewIndexDef(parts: List[c.Tree]): c.Tree = {
+    def propertiesWithCriteria(criteria: c.Tree) = parts.filter(_.exists(_.equalsStructure(criteria)))
+    def propertyName(property: c.Tree) = property match {
+      case tq"_root_.mutatus.Property[$params, $_]" => compoundTypeParents(params).head
+      case tpe => tpe 
+    } 
+
+    val inequalityFilters = propertiesWithCriteria(InequalityFiltered)
+    lazy val equalityFilters = propertiesWithCriteria(EqualityFiltered)
+    lazy val filterProperties = inequalityFilters ++ equalityFilters
+
+    lazy val asceningOrderProperties = propertiesWithCriteria(AscendingOrder)
+    lazy val descendingOrderProperies = propertiesWithCriteria(DescendingOrder)
+    lazy val orderProperies = asceningOrderProperties ++ descendingOrderProperies
+
+    if(inequalityFilters.size > 1){
+      val fields = inequalityFilters.map(propertyName).mkString(", ") 
+      c.abort(
+        c.enclosingPosition,
+        s"mutatus: Inequality criteria on multiple properties are prohibited, found on: $fields"
+      )
+    } 
+    //TODO: Check if 1st sort order criteria matchers inequality property. Abort if does not.
+
+    def hasCombinationOfFilterTypes = inequalityFilters.nonEmpty && equalityFilters.nonEmpty
+    def usesDescedningSortOrder = descendingOrderProperies.nonEmpty
+    def hasMultipleSortOrders = orderProperies.size > 1
+    def hasCombinationOrFiltersAndSortOrders = filterProperties.nonEmpty && orderProperies.nonEmpty
+
+    val needsComplexIndex = hasCombinationOrFiltersAndSortOrders ||
+      usesDescedningSortOrder || 
+      hasMultipleSortOrders ||
+      hasCombinationOfFilterTypes
+
+    val idxDefType = if(needsComplexIndex) tq"_root_.mutatus.ComplexIndexDef"
+      else tq"_root_.mutatus.SimpleIndexDef"
+
+    parts.tail.foldLeft[c.Tree](idxDefType){
+        case (lhs, rhs) => tq"$lhs with $rhs"
+    }
+  }
+
+  /** Simplifies given IndexDef. If it's complex index then it removes Sortable, Filtered property infix types
+   * In case of SimpleIndexes it removes all properties, as they would does not matter in validation of index existance.
+   */ 
+  private def simplifyIndexDef(tpe: c.Tree): c.Tree = {
+    val SimpleIndex = tq"_root_.mutatus.SimpleIndexDef"
+    if(tpe.exists(_.equalsStructure(SimpleIndex))) SimpleIndex
+    else {
+      compoundTypeParents(tpe).map{
+        case tq"_root_.mutatus.Property[$params, $order]" => 
+          val pathLiteral = compoundTypeParents(params).head
+          tq"_root_.mutatus.Property[$pathLiteral, $order]"
+        case other => other
+      }.reduce[c.Tree]{case (lhs, rhs) => tq"$lhs with $rhs"}
+    }
+  }
 }

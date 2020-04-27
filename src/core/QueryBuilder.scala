@@ -22,9 +22,14 @@ class QueryBuilder[T: WeakTypeTag](
     val kind: String,
     val query: Query = Query()
 ) extends {
+  /** Final IndexDef used when resolving it's existance within Schema */
   type IdxDef <: mutatus.IndexDef
+  
+  /** IndexDef containing all informations properties used in query. Used only internally within macros.*/
+  type FullIdxDef <: mutatus.IndexDef
   final type Idx = Index[T, IdxDef]
-  val self = this
+  
+  final val self = this
 
   def filterCriteria: Option[Filter] = query.filterCriteria
   def orderCriteria: List[StructuredQuery.OrderBy] = query.orderCriteria

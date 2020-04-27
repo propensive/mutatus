@@ -304,7 +304,8 @@ case class Dao[T: WeakTypeTag](kind: String)(
 
   /** returns query builder with empty criteria which fetches all the values of this type stored in the GCP Platform */
   def all = new QueryBuilder[T](kind, Query()) {
-    type IdxDef = mutatus.IndexDef
+    type IdxDef = mutatus.SimpleIndexDef
+    type FullIdxDef = IdxDef
   }
 
   def unapply[R](id: R)(implicit idField: IdField[T] {
