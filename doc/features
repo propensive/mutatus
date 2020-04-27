@@ -1,0 +1,4 @@
+- lightweight API for storing and retriving data in the Google Cloud Platform Datastore
+- typesafe querying
+- safe exception handling
+- automatic composite indexing for queries

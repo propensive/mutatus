@@ -6,3 +6,6 @@
 	path = adversaria
 	url = git@github.com:propensive/adversaria.git
 	branch = fury
+[submodule ".admin"]
+	path = .admin
+	url = git@github.com:propensive/admin

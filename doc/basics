@@ -1,21 +1,3 @@
-<a href="https://furore.dev/propensive/mutatus"><img src="/doc/images/furore.png" style="vertical-align:middle" valign="middle"></a>&nbsp;&nbsp;<a href="https://furore.dev/propensive/mutatus">__Develop with Fury__ </a>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="https://riot.im/app/#/room/#propensive.mutatus:matrix.org"><img src="/doc/images/riotim.png" style="vertical-arign:middle" valign="middle"></a>&nbsp;&nbsp;<a href="https://riot.im/app/#/room/#propensive.mutatus:matrix.org">__Discuss on Riot__</a>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="https://search.maven.org/search?q=g:com.propensive%20AND%20a:mutatus_2.12"><img src="/doc/images/mavencentral.png" style="vertical-arign:middle" valign="middle"></a>&nbsp;&nbsp;<a href="https://search.maven.org/search?q=g:com.propensive%20AND%20a:mutatus_2.12">__Download from Maven Central__</a>
-
-<img src="/doc/images/github.png" valign="middle">
-
-# Mutatus
-
-Mutatus is an experimental library for working with cloud-based data stores. It currently provides an ORM layer for the Google Cloud Platform Datastore.
-
-## Features
-
-- lightweight API for storing and retriving data in the Google Cloud Platform Datastore
-- typesafe querying
-- safe exception handling
-- automatic composite indexing for queries
-
-
-## Getting Started
-
 To use Mutatus, you should first set up a [GCP
 account](https://cloud.google.com/), and grant appropriate access rights to a
 service account, as [described
@@ -103,41 +85,3 @@ person.save()
 ```
 and to access the `Company` value, via the `Person`, we would just call
 `person.company()`.
-
-
-## Availability
-
-Mutatus&rsquo;s source is available on GitHub, and may be built with [Fury](https://github.com/propensive/fury) by
-cloning the layer `propensive/mutatus`.
-```
-fury layer clone -i propensive/mutatus
-```
-or imported into an existing layer with,
-```
-fury layer import -i propensive/mutatus
-```
-A binary will be made available on Maven Central.
-
-## Contributing
-
-Contributors to Mutatus are welcome and encouraged. New contributors may like to look for issues marked
-<a href="https://github.com/propensive/mutatus/labels/good%20first%20issue"><img alt="label: good first issue"
-src="https://img.shields.io/badge/-good%20first%20issue-67b6d0.svg" valign="middle"></a>.
-
-We suggest that all contributors read the [Contributing Guide](/contributing.md) to make the process of
-contributing to Mutatus easier.
-
-Please __do not__ contact project maintainers privately with questions, as other users cannot then benefit from
-the answers.
-
-## Author
-
-Mutatus was designed and developed by [Jon Pretty](https://twitter.com/propensive), and commercial support and
-training is available from [Propensive O&Uuml;](https://propensive.com/).
-
-
-
-## License
-
-Mutatus is copyright &copy; 2018-20 Jon Pretty & Propensive O&Uuml;, and is made available under the
-[Apache 2.0 License](/license.md).

@@ -1,0 +1,3 @@
+Mutatus is an experimental library for working with cloud-based data
+stores. It currently provides an ORM layer for the Google Cloud Platform
+Datastore.
