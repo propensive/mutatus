@@ -352,7 +352,7 @@ class QueryBuilderMacros(val c: whitebox.Context) {
    * Complex Query cases:
    * - Queries with ancestor and inequality filters (TODO)
    * - Queries with one or more inequality filters on a property and one or more equality filters on other properties
-   * - Queries with a sort order on keys in descending order
+   * - Queries with a sort order on keys in descending order (TODO checking if property is Key, It works with other properties)
    * - Queries with multiple sort orders
    * - Queries with one or more filters and one or more sort orders
    * */ 
@@ -368,8 +368,8 @@ class QueryBuilderMacros(val c: whitebox.Context) {
     lazy val filterProperties = inequalityFilters ++ equalityFilters
 
     lazy val asceningOrderProperties = propertiesWithCriteria(AscendingOrder)
-    lazy val descendingOrderProperies = propertiesWithCriteria(DescendingOrder)
-    lazy val orderProperies = asceningOrderProperties ++ descendingOrderProperies
+    lazy val descendingOrderProperties = propertiesWithCriteria(DescendingOrder)
+    lazy val orderProperties = asceningOrderProperties ++ descendingOrderProperties
 
     if(inequalityFilters.size > 1){
       val fields = inequalityFilters.map(propertyName).mkString(", ") 
@@ -378,17 +378,24 @@ class QueryBuilderMacros(val c: whitebox.Context) {
         s"mutatus: Inequality criteria on multiple properties are prohibited, found on: $fields"
       )
     } 
-    //TODO: Check if 1st sort order criteria matchers inequality property. Abort if does not.
 
+    if(orderProperties.size == 1 && inequalityFilters.size == 1 && equalityFilters.isEmpty){
+      if(!orderProperties.head.equalsStructure(inequalityFilters.head))
+      c.abort(
+        c.enclosingPosition,
+        s"mutatus: Inequality filter property ${propertyName(inequalityFilters.head)} and first sort order property must be equal"
+        )
+      }
+      //TODO: Check if 1st sort order criteria matchers inequality property. Abort if does not.
+    def usesSingleProperty = orderProperties.size == 1 && filterProperties.size == 1 && orderProperties.diff(filterProperties).isEmpty
+      
     def hasCombinationOfFilterTypes = inequalityFilters.nonEmpty && equalityFilters.nonEmpty
-    def usesDescedningSortOrder = descendingOrderProperies.nonEmpty
-    def hasMultipleSortOrders = orderProperies.size > 1
-    def hasCombinationOrFiltersAndSortOrders = filterProperties.nonEmpty && orderProperies.nonEmpty
+    def hasMultipleSortOrders = orderProperties.size > 1
+    def hasCombinationOrFiltersAndSortOrders = filterProperties.nonEmpty && orderProperties.nonEmpty && !usesSingleProperty
 
-    val needsComplexIndex = hasCombinationOrFiltersAndSortOrders ||
-      usesDescedningSortOrder || 
+    val needsComplexIndex = hasCombinationOfFilterTypes ||
       hasMultipleSortOrders ||
-      hasCombinationOfFilterTypes
+      hasCombinationOrFiltersAndSortOrders
 
     val idxDefType = if(needsComplexIndex) tq"_root_.mutatus.ComplexIndexDef"
       else tq"_root_.mutatus.SimpleIndexDef"
