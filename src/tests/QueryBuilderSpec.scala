@@ -23,7 +23,7 @@ case class QueryBuilderSpec()(implicit runner: Runner) {
       .build()
       .getService
   }
-
+  
   implicit val idx = Schema.load(
     DatastoreIndex[QueringTestEntity](
       ("intParam", OrderDirection.Descending),
@@ -39,13 +39,13 @@ case class QueryBuilderSpec()(implicit runner: Runner) {
   Dao[QueringTestEntity].all
     .filter(_.intParam == 0)
     .filter(_.innerClass.intParam == 1)
-    .filter(_.innerClass.intParam < 2)
-    .filter(_.intParam >= 1)
+    .filter(_.innerClass.intParam < 102)
+    .filter(_.innerClass.intParam > 2)
+    // .filter(_.intParam >= 1) // It would not compile if uncommented, due to query validations. It's correct behavior as there can be only 1 property with inequality filter
     .sortBy(_.intParam)
     .reverse
     .sortBy(_.innerClass.intParam)
     .reverse
-    .filter(_.innerClass.decimalParam == 2.0)
     .run()
 
   List(
@@ -115,11 +115,11 @@ case class QueryBuilderSpec()(implicit runner: Runner) {
     ) -> PropertyFilter.eq("listParam", "param"),
     builder.filter(x =>
       x.listParam.contains("paramName") &&
-        x.innerClass.deeper.inner.some3 >= 3 &&
+        x.innerClass.deeper.inner.some3 == 3 &&
         x.innerClassOpt.map(_.deeper.optInner).exists(_.forall(_.some3 <= 3))
     ) -> CompositeFilter.and(
       PropertyFilter.eq("listParam", "paramName"),
-      PropertyFilter.ge("innerClass.deeper.inner.some3", 3),
+      PropertyFilter.eq("innerClass.deeper.inner.some3", 3),
       PropertyFilter.le("innerClassOpt.deeper.optInner.some3", 3)
     )
   ).zipWithIndex.foreach {
@@ -144,17 +144,17 @@ case class QueryBuilderSpec()(implicit runner: Runner) {
     val x = 5
     builder.filter(e =>
       e.intParam == x + 1 && e.innerClassOpt.exists { inner =>
-        inner.intParam > 0 &&
-        inner.optionalParam.exists(_ > 1) &&
-        inner.deeper.optInner.exists(x => x.some3 <= 42 && x.none.isDefined)
+        inner.intParam == 0 &&
+        inner.optionalParam.exists(_ == 1) &&
+        inner.deeper.optInner.exists(x => x.some3 == 42 && x.none.isDefined)
       }
     )
   }.assert(result => {
     val expected = CompositeFilter.and(
       PropertyFilter.eq("intParam", 6),
-      PropertyFilter.gt("innerClassOpt.intParam", 0),
-      PropertyFilter.gt("innerClassOpt.optionalParam", 1),
-      PropertyFilter.le("innerClassOpt.deeper.optInner.some3", 42),
+      PropertyFilter.eq("innerClassOpt.intParam", 0),
+      PropertyFilter.eq("innerClassOpt.optionalParam", 1),
+      PropertyFilter.eq("innerClassOpt.deeper.optInner.some3", 42),
       PropertyFilter.gt("innerClassOpt.deeper.optInner.none", NullValue.of())
     )
     val passed = result.filterCriteria.contains(expected)
