@@ -208,6 +208,34 @@ class QueryBuilderMacros(val c: whitebox.Context) {
     }"""
   }
 
+  def takeImpl[T: c.WeakTypeTag](limit: c.Tree): c.universe.Tree = {
+    q"""
+    val current = $self
+    new QueryBuilder[${weakTypeOf[T]}](current.kind, current.query.copy(limit = _root_.scala.Some($limit))) {
+          type IdxDef = ${simplifyIndexDef(idxDef)}
+          type FullIdxDef = ${idxDef}
+    }"""
+  }
+
+  def dropImpl[T: c.WeakTypeTag](offset: c.Tree): c.universe.Tree = {
+    q"""
+    val current = $self
+    new QueryBuilder[${weakTypeOf[T]}](current.kind, current.query.copy(offset = _root_.scala.Some($offset))) {
+          type IdxDef = ${simplifyIndexDef(idxDef)}
+          type FullIdxDef = ${idxDef}
+    }"""
+  }
+
+  def sliceImpl[T: c.WeakTypeTag](offset: c.Tree, limit: c.Tree): c.universe.Tree = {
+    q"""
+    val current = $self
+    new QueryBuilder[${weakTypeOf[T]}](current.kind, current.query.copy(offset = _root_.scala.Some($offset), limit = _root_.scala.Some($limit))) {
+          type IdxDef = ${simplifyIndexDef(idxDef)}
+          type FullIdxDef = ${idxDef}
+    }"""
+  }
+  
+
   private case class CallTree(tree: mutatus.utils.BinaryTree[c.Tree]) {
     def resolveCriteria: List[AppliedCriteria] = {
       def iterate(

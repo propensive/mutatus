@@ -43,14 +43,10 @@ class QueryBuilder[T: WeakTypeTag](
 
   def reverse: QueryBuilder[T] = macro QueryBuilderMacros.reverseImpl[T]
 
-  def take(n: Int) = new QueryBuilder[T](kind, query.copy(limit = Some(n))) {
-    type IdxDef = self.IdxDef
-  }
-  def drop(n: Int) = new QueryBuilder[T](kind, query.copy(offset = Some(n))) {
-    type IdxDef = self.IdxDef
-  }
+  def take(limit: Int): QueryBuilder[T] = macro QueryBuilderMacros.takeImpl[T]
+  def drop(offset: Int): QueryBuilder[T] = macro QueryBuilderMacros.dropImpl[T] 
 
-  def slice(offset: Int, limit: Int) = drop(offset).take(limit)
+  def slice(offset: Int, limit: Int): QueryBuilder[T] = macro QueryBuilderMacros.sliceImpl[T]
 
   /** Materializes query and returns Stream of entities for GCP Storage */
   def run()(
