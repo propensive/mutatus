@@ -135,8 +135,6 @@ class QueryBuilderMacros(val c: whitebox.Context) {
   }
 
    def sortByImpl[T: c.WeakTypeTag](pred: c.Tree*): c.universe.Tree = {
-    val Sortable = tq"_root_.mutatus.Sortable"
-
     val criteria = pred.flatMap(CallTree(_).resolveCriteria)
     val sortBy: Seq[c.Tree] = criteria
       .map {
@@ -151,17 +149,17 @@ class QueryBuilderMacros(val c: whitebox.Context) {
           case property @ tq"_root_.mutatus.Property[$path, $order]" => 
             val params = compoundTypeParents(path)
             val matchesCriteriaPath = params.exists(_.equalsStructure(pathLiteral))
-            val hasSortableCrtieria = params.exists(_.equalsStructure(Sortable))
+            val hasDefinedSortOrder = order.equalsStructure(AscendingOrder) || order.equalsStructure(DescendingOrder)
 
-            if(matchesCriteriaPath && !hasSortableCrtieria)
-              tq"_root_.mutatus.Property[$path with $Sortable, $AscendingOrder]" -> true
+            if(matchesCriteriaPath && !hasDefinedSortOrder)
+              tq"_root_.mutatus.Property[$path, $AscendingOrder]" -> true
             else property -> false
 
           case other => other -> false
         }.unzip
 
         val allParts = if(appliesToCritieria.exists(_ == true)) checkedParts
-        else checkedParts :+ tq"_root_.mutatus.Property[$pathLiteral with _root_.mutatus.Sortable, _root_.mutatus.OrderDirection.Ascending.type]"
+        else checkedParts :+ tq"_root_.mutatus.Property[$pathLiteral, _root_.mutatus.OrderDirection.Ascending.type]"
         
         buildNewIndexDef(allParts)
       }
@@ -405,7 +403,7 @@ class QueryBuilderMacros(val c: whitebox.Context) {
     }
   }
 
-  /** Simplifies given IndexDef. If it's complex index then it removes Sortable, Filtered property infix types
+  /** Simplifies given IndexDef. If it's complex index then it removes Filtered property infix types
    * In case of SimpleIndexes it removes all properties, as they would does not matter in validation of index existance.
    */ 
   private def simplifyIndexDef(tpe: c.Tree): c.Tree = {

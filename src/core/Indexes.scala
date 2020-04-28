@@ -35,9 +35,6 @@ trait Property[P <: Singleton, +OrderDirection]{
   _: IndexDef => 
 }
 
-/** Internal trait used to mark that given query property literal would be used within sort crtieria */
-trait Sortable
-
 /** Internal trait used to mark that given query property would be used within filter crtieria*/
 trait Filtered
 trait InequalityFiltered extends Filtered
