@@ -35,6 +35,9 @@ trait Property[P <: Singleton, +OrderDirection]{
   _: IndexDef => 
 }
 
+/** Internal trait used to mark property set to be me the most significent position. Used for internal checks and query validations */
+trait MostSignificentSortOrder
+
 /** Internal trait used to mark that given query property would be used within filter crtieria*/
 trait Filtered
 trait InequalityFiltered extends Filtered

@@ -3,13 +3,8 @@ package mutatus
 import com.google.cloud.datastore, datastore._
 import com.google.cloud.datastore, datastore.StructuredQuery.Filter
 import language.experimental.macros
-import scala.collection.immutable.SortedMap
-import com.google.cloud.datastore.StructuredQuery.OrderBy.Direction
-import com.google.cloud.datastore.StructuredQuery.OrderBy
 import quarantine._
 import scala.reflect.runtime.universe.WeakTypeTag
-import io.opencensus.common.ServerStatsFieldEnums.Id
-import scala.annotation.implicitNotFound
 
 case class Query(
     filterCriteria: Option[Filter] = None,
@@ -36,16 +31,11 @@ class QueryBuilder[T: WeakTypeTag](
   def offset: Option[Int] = query.offset
   def limit: Option[Int] = query.limit
 
-  def filter(pred: T => Boolean): QueryBuilder[T] =
-    macro QueryBuilderMacros.filterImpl[T]
-  def sortBy(pred: (T => Any)*): QueryBuilder[T] =
-    macro QueryBuilderMacros.sortByImpl[T]
-
+  def filter(pred: T => Boolean): QueryBuilder[T] = macro QueryBuilderMacros.filterImpl[T]
+  def sortBy(pred: (T => Any)*): QueryBuilder[T] = macro QueryBuilderMacros.sortByImpl[T]
   def reverse: QueryBuilder[T] = macro QueryBuilderMacros.reverseImpl[T]
-
   def take(limit: Int): QueryBuilder[T] = macro QueryBuilderMacros.takeImpl[T]
   def drop(offset: Int): QueryBuilder[T] = macro QueryBuilderMacros.dropImpl[T] 
-
   def slice(offset: Int, limit: Int): QueryBuilder[T] = macro QueryBuilderMacros.sliceImpl[T]
 
   /** Materializes query and returns Stream of entities for GCP Storage */

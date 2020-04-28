@@ -26,10 +26,12 @@ class QueryBuilderMacros(val c: whitebox.Context) {
   private val composite = q"_root_.com.google.cloud.datastore.StructuredQuery.CompositeFilter.and"
   private val orderBy = q"_root_.com.google.cloud.datastore.StructuredQuery.OrderBy"
   
+  final val Property = tq"_root_.mutatus.Property"
   final val AscendingOrder = tq"_root_.mutatus.OrderDirection.Ascending.type"
   final val DescendingOrder = tq"_root_.mutatus.OrderDirection.Descending.type"
   final val InequalityFiltered = tq"_root_.mutatus.InequalityFiltered"
   final val EqualityFiltered = tq"_root_.mutatus.EqualityFiltered"
+  final val MSSortOrder = tq"_root_.mutatus.MostSignificentSortOrder"
 
   private val equalityOperators: Set[c.Tree] = Set(q"==", q"equals", q"isEmpty", q"contains", q"foreach")
   private val operationMapping: PartialFunction[c.Tree, (String, Option[c.Tree]) => c.Tree] = {
@@ -101,15 +103,15 @@ class QueryBuilderMacros(val c: whitebox.Context) {
                     case tpe if tpe.equalsStructure(EqualityFiltered) => equalityOperator
                     case other => other
                   }.reduce[c.Tree]{case (lhs, rhs) => tq"$lhs with $rhs"}
-                  tq"_root_.mutatus.Property[$updatedParam, $order]" -> true
-                } else tq"_root_.mutatus.Property[$path with $equalityOperator, $order]" -> true 
+                  tq"$Property[$updatedParam, $order]" -> true
+                } else tq"$Property[$path with $equalityOperator, $order]" -> true 
               else property -> false
 
             case other => other -> false
           }.unzip
 
           val allParts = if(appliesToCritieria.exists(_ == true)) checkedParts
-            else checkedParts :+ tq"_root_.mutatus.Property[$pathLiteral with $equalityOperator, _root_.mutatus.OrderDirection]"
+            else checkedParts :+ tq"$Property[$pathLiteral with $equalityOperator, _root_.mutatus.OrderDirection]"
           
           buildNewIndexDef(allParts)
       }
@@ -152,14 +154,19 @@ class QueryBuilderMacros(val c: whitebox.Context) {
             val hasDefinedSortOrder = order.equalsStructure(AscendingOrder) || order.equalsStructure(DescendingOrder)
 
             if(matchesCriteriaPath && !hasDefinedSortOrder)
-              tq"_root_.mutatus.Property[$path, $AscendingOrder]" -> true
-            else property -> false
+              tq"$Property[$path with $MSSortOrder, $AscendingOrder]" -> true
+            else if(criteria.last == ac) {
+              val filteredPath = compoundTypeParents(path)
+                .filterNot(_.equalsStructure(MSSortOrder))
+                .reduce[c.Tree]{case (lhs, rhs) => tq"$lhs with $rhs"}
+              tq"$Property[$filteredPath, $order]" -> false
+            } else property -> false
 
           case other => other -> false
         }.unzip
 
         val allParts = if(appliesToCritieria.exists(_ == true)) checkedParts
-        else checkedParts :+ tq"_root_.mutatus.Property[$pathLiteral, _root_.mutatus.OrderDirection.Ascending.type]"
+        else checkedParts :+ tq"_root_.mutatus.Property[$pathLiteral with $MSSortOrder, _root_.mutatus.OrderDirection.Ascending.type]"
         
         buildNewIndexDef(allParts)
       }
@@ -182,7 +189,7 @@ class QueryBuilderMacros(val c: whitebox.Context) {
           if(order.equalsStructure(AscendingOrder)) DescendingOrder
           else if(order.equalsStructure(DescendingOrder)) AscendingOrder
           else order
-          tq"_root_.mutatus.Property[$path, $newPropertyOrder]"
+          tq"$Property[$path, $newPropertyOrder]"
 
           case other => other
     }
@@ -233,6 +240,7 @@ class QueryBuilderMacros(val c: whitebox.Context) {
     }"""
   }
   
+
 
   private case class CallTree(tree: mutatus.utils.BinaryTree[c.Tree]) {
     def resolveCriteria: List[AppliedCriteria] = {
@@ -356,37 +364,24 @@ class QueryBuilderMacros(val c: whitebox.Context) {
    * */ 
   private def buildNewIndexDef(parts: List[c.Tree]): c.Tree = {
     def propertiesWithCriteria(criteria: c.Tree) = parts.filter(_.exists(_.equalsStructure(criteria)))
-    def propertyName(property: c.Tree) = property match {
-      case tq"_root_.mutatus.Property[$params, $_]" => compoundTypeParents(params).head
-      case tpe => tpe 
-    } 
 
     val inequalityFilters = propertiesWithCriteria(InequalityFiltered)
     lazy val equalityFilters = propertiesWithCriteria(EqualityFiltered)
     lazy val filterProperties = inequalityFilters ++ equalityFilters
-
+    
     lazy val asceningOrderProperties = propertiesWithCriteria(AscendingOrder)
     lazy val descendingOrderProperties = propertiesWithCriteria(DescendingOrder)
     lazy val orderProperties = asceningOrderProperties ++ descendingOrderProperties
+    
+    Validator.singleInequalityProperty(inequalityFilters)
+    Validator.validInequalityFilterSortOrder(parts, orderProperties)
 
-    if(inequalityFilters.size > 1){
-      val fields = inequalityFilters.map(propertyName).mkString(", ") 
-      c.abort(
-        c.enclosingPosition,
-        s"mutatus: Inequality criteria on multiple properties are prohibited, found on: $fields"
-      )
+    val hasDefinedOrder = parts.exists{
+      case tq"_root_.mutatus.Property[$_, $order]" => order.equalsStructure(AscendingOrder) || order.equalsStructure(DescendingOrder)
+      case _ => false
     } 
-
-    if(orderProperties.size == 1 && inequalityFilters.size == 1 && equalityFilters.isEmpty){
-      if(!orderProperties.head.equalsStructure(inequalityFilters.head))
-      c.abort(
-        c.enclosingPosition,
-        s"mutatus: Inequality filter property ${propertyName(inequalityFilters.head)} and first sort order property must be equal"
-        )
-      }
-      //TODO: Check if 1st sort order criteria matchers inequality property. Abort if does not.
+    
     def usesSingleProperty = orderProperties.size == 1 && filterProperties.size == 1 && orderProperties.diff(filterProperties).isEmpty
-      
     def hasCombinationOfFilterTypes = inequalityFilters.nonEmpty && equalityFilters.nonEmpty
     def hasMultipleSortOrders = orderProperties.size > 1
     def hasCombinationOrFiltersAndSortOrders = filterProperties.nonEmpty && orderProperties.nonEmpty && !usesSingleProperty
@@ -413,9 +408,51 @@ class QueryBuilderMacros(val c: whitebox.Context) {
       compoundTypeParents(tpe).map{
         case tq"_root_.mutatus.Property[$params, $order]" => 
           val pathLiteral = compoundTypeParents(params).head
-          tq"_root_.mutatus.Property[$pathLiteral, $order]"
+          tq"$Property[$pathLiteral, $order]"
         case other => other
       }.reduce[c.Tree]{case (lhs, rhs) => tq"$lhs with $rhs"}
+    }
+  }
+
+  private def propertyName(property: c.Tree) = property match {
+    case tq"_root_.mutatus.Property[$params, $_]" => compoundTypeParents(params).head
+    case tpe => tpe 
+  } 
+
+  object Validator{
+    def singleInequalityProperty(inequalityFilters: List[c.Tree]): Unit = {
+      if(inequalityFilters.size > 1){
+        val fields = inequalityFilters.map(propertyName).mkString(", ") 
+        c.abort(
+          c.enclosingPosition,
+          s"mutatus: Inequality criteria on multiple properties are prohibited, found on properties: $fields"
+        )
+      }
+    }
+
+    def validInequalityFilterSortOrder(idxDefParts: List[c.Tree], orderProperties: List[c.Tree]): Unit = {
+      val position = c.macroApplication.pos
+      lazy val nextSortOrder = position.source.lines(position.line)
+        .takeWhile(!_.contains("run()"))
+        .find(_.contains("sortBy("))
+      
+      if(orderProperties.nonEmpty){
+        lazy val mssoProperty = idxDefParts.find(_.exists(_.equalsStructure(MSSortOrder))).get
+        
+        idxDefParts
+        .find(_.exists(_.equalsStructure(InequalityFiltered)))
+        .map{
+          case property @ tq"_root_.mutatus.Property[$propertyParts, $_]" =>
+            val isMSSOProperty = compoundTypeParents(propertyParts).exists(_.equalsStructure(MSSortOrder))
+
+            if(!isMSSOProperty && nextSortOrder.isEmpty){
+              c.abort(
+                  c.enclosingPosition, 
+                  s"mutatus: Most significent sort order property ${propertyName(mssoProperty)} does not match inequality filter property ${propertyName(property)}"
+                )
+            }
+          }
+      }
     }
   }
 }

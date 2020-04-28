@@ -45,7 +45,8 @@ case class QueryBuilderSpec()(implicit runner: Runner) {
     .sortBy(_.intParam)
     .reverse
     .sortBy(_.innerClass.intParam)
-    .reverse
+    .reverse  // Would result in `order by innerClass.intParam DESC, intParam ASC`
+    // .sortBy(_.innerClass.decimalParam) //If uncommented this line should not compile, since inequality proporty is not first (or last in tems of this DSL) sort order criteria
     .run()
 
   List(
