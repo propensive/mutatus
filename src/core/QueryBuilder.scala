@@ -57,7 +57,7 @@ case class QueryBuilder[T] private[mutatus] (
 
   /** Materializes query and returns Stream of entities for GCP Storage */
   def run()(
-      implicit svc: Service = Service.default,
+      implicit ctx: Context with Context.ReadApi,
       namespace: Namespace,
       decoder: Decoder[T]
   ): mutatus.Result[Stream[mutatus.Result[T]]] = {
@@ -73,7 +73,7 @@ case class QueryBuilder[T] private[mutatus] (
     val query = withOffset.build()
 
     for {
-      results <- mutatus.Result(svc.read.run(query))
+      results <- mutatus.Result(ctx.read.run(query))
       entities = new Iterator[Entity] {
         def next(): Entity = results.next()
 

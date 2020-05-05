@@ -8,3 +8,4 @@ case class NotSavedException(kind: String)
     extends MutatusException(
       s"Entity of type $kind cannot be deleted becasue it has not been saved"
     )
+case class  InactiveTransactionException(tx: com.google.cloud.datastore.Transaction) extends MutatusException(s"Transaction ${tx.getTransactionId()} was already commited or timeout out")
