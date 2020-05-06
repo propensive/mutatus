@@ -36,7 +36,7 @@ object Context {
     }
     def saveAll(entities: Traversable[FullEntity[_]]): Result[Unit] = Result {
       val batch = service.datastore.newBatch()
-      batch.add(entities.toList: _*)
+      batch.put(entities.toList: _*)
       batch.submit()
     }
   }
@@ -54,7 +54,7 @@ object Context {
     def deleteAll(keys: Traversable[Key]): Result[Unit] =
       Result(write.delete(keys.toList: _*))
     def saveAll(entities: Traversable[FullEntity[_]]): Result[Unit] =
-      Result(write.add(entities.toList: _*))
+      Result(write.put(entities.toList: _*))
   }
 
   /**
@@ -69,7 +69,7 @@ object Context {
     def deleteAll(keys: Traversable[Key]): Result[Unit] =
       Result(write.delete(keys.toList: _*))
     def saveAll(entities: Traversable[FullEntity[_]]): Result[Unit] =
-      Result(write.add(entities.toList: _*))
+      Result(write.put(entities.toList: _*))
   }
 }
 

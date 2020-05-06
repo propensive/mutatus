@@ -350,31 +350,33 @@ object Dao {
           DatabaseException(ex)
       }
   }
- 
 
-  def batchImpl[T: c.WeakTypeTag](
+  private object DaoMacro{
+
+    def batchImpl[T: c.WeakTypeTag](
       c: blackbox.Context
-  )(batch: c.Tree)(svc: c.Tree): c.Tree = {
-    import c.universe._
-    val q"($arg) => $fnBody" = batch
-    //Using external context is a proof that provided Context.Batch was not sufficient to perform operation, though external (default) context was used
-    //Such construct could be considered as dirty hack, but I've not found  better way to found usage of default context
-    val usesExternalContext = fnBody.exists(showCode(_).contains("Context.default"))
-    if (usesExternalContext)
-      c.abort(
-        c.enclosingPosition,
-        "mutatus: Read operations within Batch are prohibited"
-      )
-
-    q"""{
-      val ctx = _root_.mutatus.Context.Batch($svc)
-      $batch(ctx).flatMap { result => 
-        _root_.mutatus.Result(ctx.batch.submit()).map(_ => result)
-      }.extenuate{
-        case ex: _root_.com.google.cloud.datastore.DatastoreException => _root_.mutatus.DatabaseException(ex)
-      }
-    }"""
-  }
+      )(batch: c.Tree)(svc: c.Tree): c.Tree = {
+        import c.universe._
+        val q"($arg) => $fnBody" = batch
+        //Using external context is a proof that provided Context.Batch was not sufficient to perform operation, though external (default) context was used
+        //Such construct could be considered as dirty hack, but I've not found  better way to found usage of default context
+        val usesExternalContext = fnBody.exists(showCode(_).contains("Context.default"))
+        if (usesExternalContext)
+        c.abort(
+          c.enclosingPosition,
+          "mutatus: Read operations within Batch are prohibited"
+          )
+          
+          q"""{
+            val ctx = _root_.mutatus.Context.Batch($svc)
+            $batch(ctx).flatMap { result => 
+              _root_.mutatus.Result(ctx.batch.submit()).map(_ => result)
+            }.extenuate{
+              case ex: _root_.com.google.cloud.datastore.DatastoreException => _root_.mutatus.DatabaseException(ex)
+            }
+          }"""
+        }
+    }
 
   /**
     * Executes write-only operations using Datastore Batch API.
@@ -394,7 +396,7 @@ object Dao {
     */
   def batch[T](batch: Context.Batch => Result[T])(
       implicit svc: Service
-  ): Result[T] = macro batchImpl[T]
+  ): Result[T] = macro DaoMacro.batchImpl[T]
 }
 
 /** companion object for `Decoder`, including Magnolia generic derivation */
