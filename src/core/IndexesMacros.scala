@@ -1,8 +1,9 @@
 package mutatus
 
 import scala.reflect.macros._
+import mutatus.utils.MacroHelpers
 
-class IndexesMacros(val c: whitebox.Context) {
+class IndexesMacros(val c: whitebox.Context) extends MacroHelpers {
   import c.universe._
 
 
