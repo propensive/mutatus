@@ -57,10 +57,10 @@ case class QueryBuilder[T] private[mutatus] (
 
   /** Materializes query and returns Stream of entities for GCP Storage */
   def run()(
-      implicit svc: Service = Service.default,
+      implicit ctx: Context with Context.ReadApi,
       namespace: Namespace,
       decoder: Decoder[T]
-  ): mutatus.Result[Stream[mutatus.Result[T]]] = {
+  ): Stream[mutatus.Result[T]] = {
     val baseQuery = namespace.option.foldLeft(
       Query.newEntityQueryBuilder().setKind(kind)
     )(_.setNamespace(_))
@@ -72,15 +72,18 @@ case class QueryBuilder[T] private[mutatus] (
     val withOffset = offset.foldLeft(limited)(_.setOffset(_))
     val query = withOffset.build()
 
-    for {
-      results <- mutatus.Result(svc.read.run(query))
-      entities = new Iterator[Entity] {
+    Result {
+      val results = ctx.read.run(query)
+      new Iterator[Entity] {
         def next(): Entity = results.next()
-
         def hasNext: Boolean = results.hasNext
-      }.toStream
-    } yield entities.map(decoder.decode)
-  }.extenuate {
-    case exc: DatastoreException => DatabaseException(exc)
+      }.toStream.map(decoder.decode)
+    }.extenuate {
+        case exc: DatastoreException => DatabaseException(exc)
+      } match {
+      case Answer(entities) => entities
+      case Error(error)     => Stream(Error(error))
+      case Surprise(error)  => Stream(Surprise(error))
+    }
   }
 }

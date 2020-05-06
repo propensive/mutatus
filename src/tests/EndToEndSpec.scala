@@ -114,24 +114,19 @@ case class EndToEndSpec()(implicit runner: Runner) {
 
   test("fetch entities - simple")(
     Dao[TestSimpleEntity].all.run()
-  ).assert {
-    case Answer(value) =>
-      value.toVector == (simpleEntities ++ batchedSimpleEntities)
-        .sortBy(_.id)
-        .map(mutatus.Answer(_))
-    case _ => false
-
-  }
+  ).assert(
+    _.toVector == (simpleEntities ++ batchedSimpleEntities)
+      .sortBy(_.id)
+      .map(mutatus.Answer(_))
+  )
 
   test("fetch entities - complex - long id")(
     Dao[TestComplexLongId].all.run()
-  ).assert {
-    case Answer(value) =>
-      value.toVector == longIdComplexEntities.toVector
-        .sortBy(_.id)
-        .map(Answer.apply)
-    case _ => false
-  }
+  ).assert(
+    _.toVector == longIdComplexEntities.toVector
+      .sortBy(_.id)
+      .map(Answer.apply)
+  )
 
   simpleEntities.take(3).foreach { e =>
     test("fetch entity by id - simple")(Dao[TestSimpleEntity].unapply(e.id))
@@ -168,20 +163,18 @@ case class EndToEndSpec()(implicit runner: Runner) {
       .drop(1)
       .take(2)
       .run()
-      .map(_.toList)
+      .toList
   }.assert(
-    _ == Answer(
-      longIdComplexEntities
-        .filter(_.innerOpt.exists(_.int >= 2))
-        .filter(_.innerOpt.exists(_.int <= 8))
-        .sortBy(_.innerOpt.map(_.int).getOrElse(-1))(
-          implicitly[Ordering[Int]].reverse
-        )
-        .drop(1)
-        .take(2)
-        .toList
-        .map(Answer(_))
-    )
+    _ == longIdComplexEntities
+      .filter(_.innerOpt.exists(_.int >= 2))
+      .filter(_.innerOpt.exists(_.int <= 8))
+      .sortBy(_.innerOpt.map(_.int).getOrElse(-1))(
+        implicitly[Ordering[Int]].reverse
+      )
+      .drop(1)
+      .take(2)
+      .toList
+      .map(Answer(_))
   )
 
   simpleEntities.take(5).foreach { entity =>
@@ -194,6 +187,135 @@ case class EndToEndSpec()(implicit runner: Runner) {
       updated.save()
       Dao[TestSimpleEntity].unapply(entity.id)
     }.assert(_.contains(Answer(updated)))
+  }
+
+  {
+    def fetchEntities = Dao[TestSimpleEntity].all.run()
+    val simpleEntitiesBefore = fetchEntities
+    val error = Error(SerializationException("Mocked up problem"))
+
+    test("rollbacks transactions in case of failure") {
+      Dao.transaction { implicit tx =>
+        for {
+          updated <- fetchEntities
+            .collect {
+              case Answer(value) => value.copy(longParam = value.longParam + 1L)
+            }
+            .saveAll()
+          _ <- error
+        } yield updated
+      }
+    }.assert(result => {
+      val stateAfter = fetchEntities
+      (simpleEntitiesBefore, result, stateAfter) match {
+        case (before, `error`, after) =>
+          before.toList == after.toList
+        case _ => false
+      }
+    })
+  }
+
+  {
+    def fetchEntities = Dao[TestSimpleEntity].all.run()
+    test("commits transactions in case of success") {
+      Dao.transaction { implicit tx =>
+        for {
+          updated <- fetchEntities
+            .collect {
+              case Answer(value) => value.copy(longParam = value.longParam + 2L)
+            }
+            .saveAll()
+        } yield updated
+      }
+    }.assert(result => {
+      val stateAfter = fetchEntities
+        .collect {
+          case Answer(value) => value
+        }
+        .toList
+        .sortBy(_.id)
+
+      (stateAfter, result.map(_.keys.toList.sortBy(_.id))) match {
+        case (expected, Answer(actual)) =>
+          val passed = expected == actual
+          if (!passed) {
+            println(s"""
+              Expected: ${expected}
+              Actual:   ${actual}
+            """)
+          }
+          passed
+        case (expected, actual) =>
+          println(s"""
+              Expected: ${expected}
+              Actual:   ${actual}
+            """)
+          false
+      }
+    })
+  }
+
+  def fetchSimpleEntities() = Dao[TestSimpleEntity].all.run()
+
+  {
+    test("submits batches") {
+      val stateBefore = fetchSimpleEntities
+      Dao.batch { implicit batch =>
+        for {
+          x <- Result {
+            stateBefore
+              .take(5)
+              .collect {
+                case Answer(value) =>
+                  val updated =
+                    value.copy(decimalParam = value.decimalParam + 1.0)
+                  value -> value.save()
+              }
+              .toMap
+          }
+          y <- stateBefore
+            .drop(5)
+            .collect {
+              case Answer(value) =>
+                value.copy(decimalParam = value.decimalParam - 1.0)
+            }
+            .saveAll()
+        } yield x ++ y
+      }
+    }.assert(result => {
+      val actualState = fetchSimpleEntities().collect {
+        case Answer(value) => value
+      }
+
+      (result, actualState) match {
+        case (Answer(expected), actual) =>
+          expected.keySet.toList.sortBy(_.id) == actual.toList
+        case _ => false
+      }
+    })
+
+    val stateBefore = fetchSimpleEntities()
+    val error = Error(SerializationException("Mock up"))
+    test("does not submit errorues batches") {
+      Dao.batch { implicit batch =>
+        for {
+          updated <- Result {
+            stateBefore.collect {
+              case Answer(value) =>
+                value.copy(decimalParam = value.decimalParam + Math.PI)
+            }
+          }
+          _ <- updated.saveAll()
+          _ <- error
+        } yield updated
+      }
+    }.assert(result =>
+      (result, stateBefore, fetchSimpleEntities()) match {
+        case (`error`, stateBefore, actualState) =>
+          stateBefore.nonEmpty && stateBefore.toList == actualState.toList
+        case _ => false
+      }
+    )
   }
 
   simpleEntities.foreach { e =>
@@ -237,10 +359,7 @@ case class EndToEndSpec()(implicit runner: Runner) {
   test("removes entities in batch mode") {
     batchedSimpleEntities.deleteAll()
     Dao[TestSimpleEntity].all.run()
-  }.assert {
-    case Answer(result) => result.isEmpty
-    case _              => false
-  }
+  }.assert(_.isEmpty)
 
   test("removed everything") {
     List(
@@ -249,13 +368,7 @@ case class EndToEndSpec()(implicit runner: Runner) {
       Dao[TestComplexStringId].all.run(),
       Dao[TestComplexGuid].all.run()
     )
-  }.assert(_.forall {
-    case Answer(result) => result.isEmpty
-    case other =>
-      println(other)
-      false
-  })
-
+  }.assert(_.forall(_.isEmpty))
 }
 
 object EndToEndSpec {
