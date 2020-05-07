@@ -2,6 +2,7 @@ package mutatus
 
 import scala.reflect.runtime.universe.WeakTypeTag
 import language.experimental.macros
+import adversaria.TypeMetadata
 
 /** Order direction for given Index Proprty existing in schema */
 sealed trait OrderDirection
@@ -12,10 +13,9 @@ object OrderDirection {
 }
 
 /** Contains type defininitions of all Entity indexes */
-trait Schema[+T <: Index[_, _]]
+sealed trait Schema[+T <: Index[_, _]]
 object Schema{
   implicit def simpleIndexSchema[T]: Schema[Index[T, SimpleIndexDef]] = null
-  def apply(indexes: DatastoreIndex[_]*): Schema[_ <: Index[_, _]] =  macro IndexesMacros.extractSchemaImpl
 }
 
 /** Base type for each Index Property definition. 
@@ -45,6 +45,7 @@ trait InequalityFiltered extends Filtered
 trait EqualityFiltered extends Filtered
 
 
+
 sealed abstract class PropertySelector[-T](val orderDirection: OrderDirection){
   def selector: T => Any 
 }
@@ -53,5 +54,16 @@ object PropertySelector{
   case class Desc[-T](selector: T => Any) extends PropertySelector[T](OrderDirection.Descending)
 }
 
+case class SchemaDef[+T <: Index[_,_]](indexes: SchemaDef.Index[E] forSome {type E}*){
+  def using[R](fn: Schema[T] => Result[R]) = {
+    val schema = new Schema[T] {} //TODO Validations that make indexes exists in datastore
+    fn(schema)
+  }
+}
+object SchemaDef{
+  case class Index[+T](kind: String, properties: SchemaDef.Property*)
+  case class Property(path: String, ordering: OrderDirection)
+  def apply[T](indexes: DatastoreIndex[T]*): SchemaDef[_] = macro IndexesMacros.extractSchemaImpl
+}
 
 case class DatastoreIndex[-T](properties: PropertySelector[T]*)

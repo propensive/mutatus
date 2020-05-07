@@ -27,7 +27,7 @@ case class QueryBuilderSpec()(implicit runner: Runner) {
 case class SomeOtherEntity(foo: Int, bar: String)
 
   import PropertySelector._
-  implicit val schema = Schema(
+  val schema = SchemaDef(
     DatastoreIndex[QueringTestEntity](
       Desc(_.intParam),
       Asc(_.innerClass.intParam)
@@ -43,7 +43,8 @@ case class SomeOtherEntity(foo: Int, bar: String)
     )
   )
 
-  Dao[QueringTestEntity].all
+  schema.using{ implicit schema =>
+    Dao[QueringTestEntity].all
     .filter(_.intParam == 0)
     .filter(_.innerClass.intParam < 102)
     .filter(_.innerClass.intParam > 2)
@@ -54,6 +55,7 @@ case class SomeOtherEntity(foo: Int, bar: String)
     .reverse  // Would result in `order by innerClass.intParam DESC, intParam ASC`
     // .sortBy(_.innerClass.decimalParam) //If uncommented this line should not compile, since inequality proporty is not first (or last in tems of this DSL) sort order criteria
     .run()
+  }
 
   List(
     builder.filter(_.intParam == 0) -> PropertyFilter.eq("intParam", 0),
