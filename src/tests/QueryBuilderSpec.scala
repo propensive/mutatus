@@ -24,21 +24,27 @@ case class QueryBuilderSpec()(implicit runner: Runner) {
       .getService
   }
   
-  implicit val idx = Schema.load(
+case class SomeOtherEntity(foo: Int, bar: String)
+
+  import PropertySelector._
+  implicit val schema = Schema(
     DatastoreIndex[QueringTestEntity](
-      ("intParam", OrderDirection.Descending),
-      ("innerClass.intParam", OrderDirection.Ascending)
+      Desc(_.intParam),
+      Asc(_.innerClass.intParam)
     ),
     DatastoreIndex[QueringTestEntity](
-      ("intParam", OrderDirection.Ascending),
-      ("innerClass.intParam", OrderDirection.Descending),
-      ("innerClass.decimalParam", OrderDirection.Ascending)
+      Asc(_.intParam),
+      Desc(_.innerClass.intParam),
+      Asc(_.innerClass.decimalParam)
+    ),
+    DatastoreIndex[SomeOtherEntity](
+      Asc(_.foo),
+      Desc(_.bar)
     )
   )
 
   Dao[QueringTestEntity].all
     .filter(_.intParam == 0)
-    .filter(_.innerClass.intParam == 1)
     .filter(_.innerClass.intParam < 102)
     .filter(_.innerClass.intParam > 2)
     // .filter(_.intParam >= 1) // It would not compile if uncommented, due to query validations. It's correct behavior as there can be only 1 property with inequality filter

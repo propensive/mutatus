@@ -5,6 +5,7 @@ import language.experimental.macros
 
 /** Order direction for given Index Proprty existing in schema */
 sealed trait OrderDirection
+
 object OrderDirection {
   case object Ascending extends OrderDirection
   case object Descending extends OrderDirection
@@ -13,8 +14,8 @@ object OrderDirection {
 /** Contains type defininitions of all Entity indexes */
 trait Schema[+T <: Index[_, _]]
 object Schema{
-  implicit def simpleIndexShema[T]: Schema[Index[T, SimpleIndexDef]] = null
-  def load(indexes: DatastoreIndex[_]*): Schema[_ <: Index[_, _]] =  macro IndexesMacros.loadIndexesImpl
+  implicit def simpleIndexSchema[T]: Schema[Index[T, SimpleIndexDef]] = null
+  def apply(indexes: DatastoreIndex[_]*): Schema[_ <: Index[_, _]] =  macro IndexesMacros.extractSchemaImpl
 }
 
 /** Base type for each Index Property definition. 
@@ -43,4 +44,14 @@ trait Filtered
 trait InequalityFiltered extends Filtered
 trait EqualityFiltered extends Filtered
 
-case class DatastoreIndex[T](properties: (String,OrderDirection)*)
+
+sealed abstract class PropertySelector[-T](val orderDirection: OrderDirection){
+  def selector: T => Any 
+}
+object PropertySelector{
+  case class Asc[-T](selector: T => Any) extends PropertySelector[T](OrderDirection.Ascending)
+  case class Desc[-T](selector: T => Any) extends PropertySelector[T](OrderDirection.Descending)
+}
+
+
+case class DatastoreIndex[-T](properties: PropertySelector[T]*)
