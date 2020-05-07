@@ -18,11 +18,11 @@ class QueryBuilder[T: WeakTypeTag](
     val query: Query = Query()
 ) extends {
   /** Final IndexDef used when resolving it's existance within Schema */
-  type IdxDef <: mutatus.IndexDef
+  type IdxDef <: mutatus.Schema.IndexType
   
   /** IndexDef containing all informations properties used in query. Used only internally within macros.*/
-  type FullIdxDef <: mutatus.IndexDef
-  final type Idx = Index[T, IdxDef]
+  type FullIdxDef <: mutatus.Schema.IndexType
+  final type Idx = Schema.Index[T, IdxDef]
   
   final val self = this
 

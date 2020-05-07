@@ -17,7 +17,7 @@ class QueryBuilderMacros(val c: whitebox.Context) extends MacroHelpers {
       case tpe => tpe  
     }.map{
       case tpe: CompoundTypeTree => tpe
-    }.getOrElse(tq"_root_.mutatus.SimpleIndexDef")
+    }.getOrElse(tq"_root_.mutatus.Schema.IndexType.Simple")
   
   def filterImpl[T: c.WeakTypeTag](
       pred: c.Expr[T => Boolean]
@@ -50,7 +50,7 @@ class QueryBuilderMacros(val c: whitebox.Context) extends MacroHelpers {
           val equalityOperator = if(usesEqualityOperator) EqualityFiltered else InequalityFiltered
 
           val (checkedParts, appliesToCritieria) = compoundTypeParents(tpe).collect{
-            case property @ tq"_root_.mutatus.Property[$path, $order]" => 
+            case property @ tq"_root_.mutatus.Schema.Property[$path, $order]" => 
               val params = compoundTypeParents(path)
               
               val matchesCriteriaPath = params.exists(_.equalsStructure(tq"$pathLiteral"))
@@ -73,7 +73,7 @@ class QueryBuilderMacros(val c: whitebox.Context) extends MacroHelpers {
           }.unzip
 
           val allParts = if(appliesToCritieria.exists(_ == true)) checkedParts
-            else checkedParts :+ tq"$Property[$pathLiteral with $equalityOperator, _root_.mutatus.OrderDirection]"
+            else checkedParts :+ tq"$Property[$pathLiteral with $equalityOperator, _root_.mutatus.Schema.OrderDirection]"
           
           buildNewIndexDef(allParts)
       }
@@ -110,7 +110,7 @@ class QueryBuilderMacros(val c: whitebox.Context) extends MacroHelpers {
         case (tpe, ac) =>
         val pathLiteral = tq"${ac.path}"
         val (checkedParts, appliesToCritieria) = compoundTypeParents(tpe).collect{
-          case property @ tq"_root_.mutatus.Property[$path, $order]" => 
+          case property @ tq"_root_.mutatus.Schema.Property[$path, $order]" => 
             val params = compoundTypeParents(path)
             val matchesCriteriaPath = params.exists(_.equalsStructure(pathLiteral))
             val hasDefinedSortOrder = order.equalsStructure(AscendingOrder) || order.equalsStructure(DescendingOrder)
@@ -128,7 +128,7 @@ class QueryBuilderMacros(val c: whitebox.Context) extends MacroHelpers {
         }.unzip
 
         val allParts = if(appliesToCritieria.exists(_ == true)) checkedParts
-        else checkedParts :+ tq"_root_.mutatus.Property[$pathLiteral with $MSSortOrder, _root_.mutatus.OrderDirection.Ascending.type]"
+        else checkedParts :+ tq"_root_.mutatus.Schema.Property[$pathLiteral with $MSSortOrder, $AscendingOrder]"
         
         buildNewIndexDef(allParts)
       }
@@ -146,7 +146,7 @@ class QueryBuilderMacros(val c: whitebox.Context) extends MacroHelpers {
 
   def reverseImpl[T: c.WeakTypeTag]: c.universe.Tree = {
     val newIdxDef = compoundTypeParents(idxDef).map{
-      case tq"_root_.mutatus.Property[$path, $order]" =>
+      case tq"_root_.mutatus.Schema.Property[$path, $order]" =>
         val newPropertyOrder = 
           if(order.equalsStructure(AscendingOrder)) DescendingOrder
           else if(order.equalsStructure(DescendingOrder)) AscendingOrder
@@ -225,7 +225,7 @@ class QueryBuilderMacros(val c: whitebox.Context) extends MacroHelpers {
     Validator.validInequalityFilterSortOrder(parts, orderProperties)
 
     val hasDefinedOrder = parts.exists{
-      case tq"_root_.mutatus.Property[$_, $order]" => order.equalsStructure(AscendingOrder) || order.equalsStructure(DescendingOrder)
+      case tq"_root_.mutatus.Schema.Property[$_, $order]" => order.equalsStructure(AscendingOrder) || order.equalsStructure(DescendingOrder)
       case _ => false
     } 
     
@@ -238,8 +238,8 @@ class QueryBuilderMacros(val c: whitebox.Context) extends MacroHelpers {
       hasMultipleSortOrders ||
       hasCombinationOrFiltersAndSortOrders
 
-    val idxDefType = if(needsComplexIndex) tq"_root_.mutatus.ComplexIndexDef"
-      else tq"_root_.mutatus.SimpleIndexDef"
+    val idxDefType = if(needsComplexIndex) tq"_root_.mutatus.Schema.IndexType.Complex"
+      else tq"_root_.mutatus.Schema.IndexType.Simple"
 
     parts.tail.foldLeft[c.Tree](idxDefType){
         case (lhs, rhs) => tq"$lhs with $rhs"
@@ -250,11 +250,11 @@ class QueryBuilderMacros(val c: whitebox.Context) extends MacroHelpers {
    * In case of SimpleIndexes it removes all properties, as they would does not matter in validation of index existance.
    */ 
   private def simplifyIndexDef(tpe: c.Tree): c.Tree = {
-    val SimpleIndex = tq"_root_.mutatus.SimpleIndexDef"
+    val SimpleIndex = tq"_root_.mutatus.Schema.IndexType.Simple"
     if(tpe.exists(_.equalsStructure(SimpleIndex))) SimpleIndex
     else {
       compoundTypeParents(tpe).map{
-        case tq"_root_.mutatus.Property[$params, $order]" => 
+        case tq"_root_.mutatus.Schema.Property[$params, $order]" => 
           val pathLiteral = compoundTypeParents(params).head
           tq"$Property[$pathLiteral, $order]"
         case other => other
@@ -287,7 +287,7 @@ class QueryBuilderMacros(val c: whitebox.Context) extends MacroHelpers {
         idxDefParts
         .find(_.exists(_.equalsStructure(InequalityFiltered)))
         .map{
-          case property @ tq"_root_.mutatus.Property[$propertyParts, $_]" =>
+          case property @ tq"_root_.mutatus.Schema.Property[$propertyParts, $_]" =>
             val isMSSOProperty = compoundTypeParents(propertyParts).exists(_.equalsStructure(MSSortOrder))
 
             if(!isMSSOProperty && nextSortOrder.isEmpty){

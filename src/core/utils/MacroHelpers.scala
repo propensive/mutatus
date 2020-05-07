@@ -19,17 +19,17 @@ trait MacroHelpers {
     "get",
     "toString"
   )
-  
+
   final val filter =    q"_root_.com.google.cloud.datastore.StructuredQuery.PropertyFilter"
   final val composite = q"_root_.com.google.cloud.datastore.StructuredQuery.CompositeFilter.and"
   final val orderBy =   q"_root_.com.google.cloud.datastore.StructuredQuery.OrderBy"
 
-  final val Property =           tq"_root_.mutatus.Property"
-  final val AscendingOrder =     tq"_root_.mutatus.OrderDirection.Ascending.type"
-  final val DescendingOrder =    tq"_root_.mutatus.OrderDirection.Descending.type"
-  final val InequalityFiltered = tq"_root_.mutatus.InequalityFiltered"
-  final val EqualityFiltered =   tq"_root_.mutatus.EqualityFiltered"
-  final val MSSortOrder =        tq"_root_.mutatus.MostSignificentSortOrder"
+  final val Property =           tq"_root_.mutatus.Schema.Property"
+  final val AscendingOrder =     tq"_root_.mutatus.Schema.OrderDirection.Ascending.type"
+  final val DescendingOrder =    tq"_root_.mutatus.Schema.OrderDirection.Descending.type"
+  final val InequalityFiltered = tq"_root_.mutatus.Schema.InequalityFiltered"
+  final val EqualityFiltered =   tq"_root_.mutatus.Schema.EqualityFiltered"
+  final val MSSortOrder =        tq"_root_.mutatus.Schema.MostSignificentSortOrder"
 
   protected val equalityOperators: Set[c.Tree] = Set(q"==", q"equals", q"isEmpty", q"contains", q"foreach")
   protected val operationMapping: PartialFunction[c.Tree, (String, Option[c.Tree]) => c.Tree] = {

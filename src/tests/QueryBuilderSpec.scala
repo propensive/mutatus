@@ -5,8 +5,6 @@ import com.google.cloud.datastore.StructuredQuery._
 import com.google.cloud.datastore._
 import mutatus._
 import probably._
-import mutatus.OrderDirection._
-import language.higherKinds
 
 case class QueryBuilderSpec()(implicit runner: Runner) {
   import QueryBuilderSpec.Model._
@@ -26,18 +24,17 @@ case class QueryBuilderSpec()(implicit runner: Runner) {
   
 case class SomeOtherEntity(foo: Int, bar: String)
 
-  import PropertySelector._
   val schema = SchemaDef(
-    DatastoreIndex[QueringTestEntity](
+    Index[QueringTestEntity](
       Desc(_.intParam),
       Asc(_.innerClass.intParam)
     ),
-    DatastoreIndex[QueringTestEntity](
+    Index[QueringTestEntity](
       Asc(_.intParam),
       Desc(_.innerClass.intParam),
       Asc(_.innerClass.decimalParam)
     ),
-    DatastoreIndex[SomeOtherEntity](
+    Index[SomeOtherEntity](
       Asc(_.foo),
       Desc(_.bar)
     )
