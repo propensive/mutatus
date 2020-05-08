@@ -5,6 +5,7 @@ import com.google.cloud.datastore, datastore.StructuredQuery.Filter
 import language.experimental.macros
 import quarantine._
 import scala.reflect.runtime.universe.WeakTypeTag
+import Mutatus._
 
 case class Query(
     filterCriteria: Option[Filter] = None,
@@ -44,7 +45,7 @@ class QueryBuilder[T: WeakTypeTag](
       namespace: Namespace,
       decoder: Decoder[T],
       ev: Schema[Idx]
-  ): mutatus.Result[Stream[mutatus.Result[T]]] = {
+  ): Result[Stream[Result[T]]] = {
     val baseQuery = namespace.option.foldLeft(
       datastore.Query.newEntityQueryBuilder().setKind(kind)
     )(_.setNamespace(_))
@@ -57,7 +58,7 @@ class QueryBuilder[T: WeakTypeTag](
     val finalQuery = withOffset.build()
 
     for {
-      results <- mutatus.Result(svc.read.run(finalQuery))
+      results <- Result(svc.read.run(finalQuery))
       entities = new Iterator[Entity] {
         def next(): Entity = results.next()
 

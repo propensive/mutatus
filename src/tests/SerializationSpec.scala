@@ -3,6 +3,7 @@ package mutatus.tests
 import com.google.cloud.datastore._
 import mutatus._
 import probably._
+import Mutatus._
 
 case class SerializationSpec(implicit runner: Runner) {
   import SerializationSpec.Model._

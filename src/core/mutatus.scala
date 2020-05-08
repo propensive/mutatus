@@ -17,7 +17,6 @@ package mutatus
 import adversaria._
 import com.google.cloud.datastore._
 import magnolia._
-import quarantine._
 import mercator._
 
 import scala.annotation.StaticAnnotation
@@ -28,21 +27,11 @@ import scala.language.experimental.macros
 import io.opencensus.trace.Status.CanonicalCode
 import com.google.rpc.Code
 import com.google.auth.oauth2.{ServiceAccountCredentials, AccessToken}
+import Mutatus._
 
 /** Mutatus package object */
-object `package` extends Domain[MutatusException] {
-  implicit val mitigateHttp = antiphony.Http.mitigate(mutatus.`package`) {
-      case _: antiphony.NotAuthorized => Unathorized
-      case ex => DatabaseException(ex)
-  }
-  
-  implicit val mitigateEuphenismParser = euphemism.ParseException.mitigate(mutatus.`package`){
-    case ex:  euphemism.ParseException => SerializationException(ex.message)
-  }
-  implicit val mitigateEuphenismAccess = euphemism.Access.mitigate(mutatus.`package`){
-    case ex =>     SerializationException(ex.getMessage())
-  }
-
+object `package` {
+  implicit val domain = Mutatus
   /** provides `saveAll` and `deleteAll` methods for collections of case class instances */
   implicit class DataBatchExt[T <: Product](values: Traversable[T]) {
 
@@ -52,7 +41,7 @@ object `package` extends Domain[MutatusException] {
         encoder: Encoder[T],
         dao: Dao[T],
         idField: IdField[T]
-    ): mutatus.Result[Map[T, Ref[T]]] = {
+    ): Result[Map[T, Ref[T]]] = {
       val (batch, refs) =
         values.foldLeft(svc.readWrite.newBatch() -> Map.empty[T, Ref[T]]) {
           case ((b, entityRefs), value) =>
@@ -73,7 +62,7 @@ object `package` extends Domain[MutatusException] {
         implicit svc: Service,
         dao: Dao[T],
         idField: IdField[T]
-    ): mutatus.Result[Unit] =
+    ): Result[Unit] =
       Result {
         values
           .foldLeft(svc.readWrite.newBatch()) {
@@ -116,7 +105,7 @@ object `package` extends Domain[MutatusException] {
         encoder: Encoder[T],
         dao: Dao[T],
         idField: IdField[T]
-    ): mutatus.Result[Ref[T]] =
+    ): Result[Ref[T]] =
       Result {
         new Ref[T](
           svc.readWrite.put(buildEntity()).getKey
@@ -130,7 +119,7 @@ object `package` extends Domain[MutatusException] {
         implicit svc: Service,
         dao: Dao[T],
         idField: IdField[T]
-    ): mutatus.Result[Unit] =
+    ): Result[Unit] =
       Result {
         svc.readWrite.delete(
           idField.idKey(idField.key(value)).newKey(dao.keyFactory)
@@ -152,8 +141,8 @@ object `package` extends Domain[MutatusException] {
   ): T =
     if (str.isEmpty) empty else nonEmpty(str)
 
-  implicit val monadicResult: Monadic[mutatus.Result] =
-    new Monadic[mutatus.Result] {
+  implicit val monadicResult: Monadic[Result] =
+    new Monadic[Result] {
       def flatMap[A, B](from: Result[A])(fn: A => Result[B]): Result[B] =
         from.flatMap(fn)
       def map[A, B](from: Result[A])(fn: A => B): Result[B] = from.map(fn)
@@ -378,7 +367,7 @@ object Decoder extends Decoder_1 {
   def dispatch[T](st: SealedTrait[Decoder, T]): Decoder[T] =
     encodedValue => {
       // Naive approach used when fetching entity not indexed by mutatus
-      def firstSucess(value: Value[_]): mutatus.Result[T] = {
+      def firstSucess(value: Value[_]): Result[T] = {
         st.subtypes.toStream
           .map { subtype => subtype.typeclass.decodeValue(value) }
           .collectFirst { case success: Answer[T] @unchecked => success }
@@ -394,7 +383,7 @@ object Decoder extends Decoder_1 {
       def subtypeForName(
           typeName: String,
           entityValue: Value[_]
-      ): mutatus.Result[T] = {
+      ): Result[T] = {
         st.subtypes
           .collectFirst {
             case subtype if subtype.typeName.short == typeName =>

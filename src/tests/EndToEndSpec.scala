@@ -4,6 +4,7 @@ import mutatus._
 import probably._
 import com.google.cloud.datastore._
 import util.Try
+import Mutatus._
 
 case class EndToEndSpec()(implicit runner: Runner) {
   implicit val datastore: Datastore =
@@ -118,7 +119,7 @@ case class EndToEndSpec()(implicit runner: Runner) {
     case Answer(value) =>
       value.toVector == (simpleEntities ++ batchedSimpleEntities)
         .sortBy(_.id)
-        .map(mutatus.Answer(_))
+        .map(Answer(_))
     case _ => false
   }
 

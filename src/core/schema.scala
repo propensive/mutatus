@@ -11,6 +11,7 @@ import mutatus.SchemaDef.IndexState
 import scala.concurrent.duration._
 import scala.annotation.tailrec
 import org.typelevel.jawn.ast.JString
+import Mutatus._
 
 /** Contains type defininitions of all Entity indexes */
 sealed trait Schema[+T <: Schema.Index[_, _]]
@@ -62,7 +63,7 @@ object Schema {
 case class SchemaDef[+T <: Schema.Index[_, _]](indexes: SchemaDef.IndexDef[_]*) {
   type IdxList = List[SchemaDef.IndexDef[_]]
 
-  def using[R](fn: Schema[T] => Result[R])(implicit service: Service):Result[R] = using(waitReady = false)(fn)
+  def using[R](fn: Schema[T] => Result[R])(implicit service: Service): Result[R] = using(waitReady = false)(fn)
   def using[R](waitReady: Boolean = true, timeout: FiniteDuration = 5.minute)(fn: Schema[T] => Result[R])(implicit service: Service):Result[R] = for {
       existingIndexes <- fetchIndices()
       missing = indexes.filterNot(_.matchesOneOf(existingIndexes)).toList
@@ -89,20 +90,20 @@ case class SchemaDef[+T <: Schema.Index[_, _]](indexes: SchemaDef.IndexDef[_]*) 
     }
     iter(indexes, Nil)
   }
-
-  private def fetchIndices()(implicit service: Service): Result[Set[SchemaDef.IndexDef[_]]] =
+  import Mutatus._
+  private def fetchIndices()(implicit service: Service): Mutatus.Result[Set[SchemaDef.IndexDef[_]]] =
     for {
       response <- Http.get(
           url = s"https://datastore.googleapis.com/v1/projects/${service.options.getProjectId()}/indexes",
           headers = Set(
             HttpHeader("Authorization", s"Bearer ${service.accessToken.getTokenValue()}")
           )
-        ).adapt(mutatus.`package`, mitigateHttp)
-      json <- Json.parse(new String(response)).adapt(mutatus.`package`, mitigateEuphenismParser)
-      indexes <- json.indexes.as[List[SchemaDef.IndexDef[Any]]].adapt(`package`, mitigateEuphenismAccess)
+        ).adapt[Mutatus.type]
+      json <- Json.parse(new String(response)).adapt[Mutatus.type]
+      indexes <- json.indexes.as[List[SchemaDef.IndexDef[Any]]].adapt[Mutatus.type]
     } yield indexes.toSet
 
-  private def waitIndexesReadyIfNeeded(waitReady:Boolean, timeout: FiniteDuration, checkedIndexes: IdxList): Result[Unit] = if(!waitReady || checkedIndexes.isEmpty){
+  private def waitIndexesReadyIfNeeded(waitReady:Boolean, timeout: FiniteDuration, checkedIndexes: IdxList): Mutatus.Result[Unit] = if(!waitReady || checkedIndexes.isEmpty){
       Answer()
     }else{
       val start = System.currentTimeMillis()
@@ -152,15 +153,15 @@ object SchemaDef {
               |"properties": ${Json(properties)}
               |}""".stripMargin
           }
-          .adapt(mutatus.`package`, mitigateEuphenismParser)
+          .adapt[Mutatus.type]
         headers = Set(
           HttpHeader("Authorization", s"Bearer ${service.accessToken.getTokenValue()}")
         )
         response <- Http
           .post(s"https://datastore.googleapis.com/v1/projects/${service.options.getProjectId()}/indexes", content, headers)
-          .adapt(mutatus.`package`, mitigateHttp)
-        json <- Json.parse(new String(response)).adapt(`package`, mitigateEuphenismParser)
-        id <- json.metadata.indexId.as[Option[String]].adapt(`package`, mitigateEuphenismAccess)
+          .adapt[Mutatus.type]
+        json <- Json.parse(new String(response)).adapt[Mutatus.type]
+        id <- json.metadata.indexId.as[Option[String]].adapt[Mutatus.type]
       } yield copy(state = IndexState.Creating, indexId = id)
     }
 
@@ -179,7 +180,7 @@ object SchemaDef {
               method = "DELETE",
               headers = headers
             )
-            .adapt(`package`, mitigateHttp)
+            .adapt[Mutatus.type]
           result = println(new String(response))
         } yield result
       }
