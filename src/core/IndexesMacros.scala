@@ -43,7 +43,7 @@ class IndexesMacros(val c: whitebox.Context) extends MacroHelpers {
       } yield q"new _root_.mutatus.SchemaDef.Property(${ac.path}, $order)"
       indexDef = q"""{
         val meta = implicitly[_root_.adversaria.TypeMetadata[$entityType]]
-        new _root_.mutatus.SchemaDef.IndexDef[$entityType](meta.typeName, ..$indexProperties)
+        new _root_.mutatus.SchemaDef.IndexDef[$entityType](meta.typeName, _root_.scala.List(..$indexProperties))
       }"""
     } yield indexDef
 

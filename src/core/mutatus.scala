@@ -27,9 +27,21 @@ import scala.collection.generic.CanBuildFrom
 import scala.language.experimental.macros
 import io.opencensus.trace.Status.CanonicalCode
 import com.google.rpc.Code
+import com.google.auth.oauth2.{ServiceAccountCredentials, AccessToken}
 
 /** Mutatus package object */
 object `package` extends Domain[MutatusException] {
+  implicit val mitigateHttp = antiphony.Http.mitigate(mutatus.`package`) {
+      case _: antiphony.NotAuthorized => Unathorized
+      case ex => DatabaseException(ex)
+  }
+  
+  implicit val mitigateEuphenismParser = euphemism.ParseException.mitigate(mutatus.`package`){
+    case ex:  euphemism.ParseException => SerializationException(ex.message)
+  }
+  implicit val mitigateEuphenismAccess = euphemism.Access.mitigate(mutatus.`package`){
+    case ex =>     SerializationException(ex.getMessage())
+  }
 
   /** provides `saveAll` and `deleteAll` methods for collections of case class instances */
   implicit class DataBatchExt[T <: Product](values: Traversable[T]) {
@@ -183,7 +195,14 @@ case class Geo(lat: Double, lng: Double) {
 
 /** a representation of the GCP Datastore service */
 case class Service(readWrite: Datastore) {
-  def read: DatastoreReader = readWrite
+  val read: DatastoreReader = readWrite
+  val options = readWrite.getOptions()
+  def accessToken: AccessToken = {
+    val credentials = options.getCredentials() match {
+      case credentials: ServiceAccountCredentials => credentials.createScoped("https://www.googleapis.com/auth/datastore")
+    }
+    Option(credentials.getAccessToken()).getOrElse(credentials.refreshAccessToken())
+  }
 }
 
 object Service {
@@ -391,8 +410,7 @@ object Decoder extends Decoder_1 {
       }
 
       encodedValue match {
-        case entityValue: EntityValue
-            if entityValue.get.contains(Encoder.metaField) =>
+        case entityValue: EntityValue if entityValue.get.contains(Encoder.metaField) =>
           Result(
             entityValue.get
               .getEntity(Encoder.metaField)
@@ -531,16 +549,14 @@ object Encoder extends Encoder_1 {
   implicit val int: Encoder[Int] = v => LongValue.of(v.toLong)
   implicit val short: Encoder[Short] = v => LongValue.of(v.toLong)
   implicit val byte: Encoder[Byte] = v => LongValue.of(v.toLong)
-  implicit val byteArray: Encoder[Array[Byte]] = v =>
-    BlobValue.of(Blob.copyFrom(v))
+  implicit val byteArray: Encoder[Array[Byte]] = v => BlobValue.of(Blob.copyFrom(v))
   implicit val boolean: Encoder[Boolean] = BooleanValue.of
   implicit val double: Encoder[Double] = DoubleValue.of
   implicit val float: Encoder[Float] = v => DoubleValue.of(v.toDouble)
   implicit val geo: Encoder[Geo] = v => LatLngValue.of(v.toLatLng)
 
   implicit def ref[T]: Encoder[Ref[T]] = v => KeyValue.of(v.ref)
-  implicit def collection[Coll[T] <: Traversable[T], T: Encoder]
-      : Encoder[Coll[T]] =
+  implicit def collection[Coll[T] <: Traversable[T], T: Encoder]: Encoder[Coll[T]] =
     coll =>
       ListValue.of {
         coll.toList.map(implicitly[Encoder[T]].encode(_)).asJava
