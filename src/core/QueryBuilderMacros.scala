@@ -214,13 +214,14 @@ class QueryBuilderMacros(val c: whitebox.Context) extends MacroHelpers {
     def propertiesWithCriteria(criteria: c.Tree) = parts.filter(_.exists(_.equalsStructure(criteria)))
 
     val inequalityFilters = propertiesWithCriteria(InequalityFiltered)
-    lazy val equalityFilters = propertiesWithCriteria(EqualityFiltered)
-    lazy val filterProperties = inequalityFilters ++ equalityFilters
+    val equalityFilters = propertiesWithCriteria(EqualityFiltered)
+    val filterProperties = inequalityFilters ++ equalityFilters
     
-    lazy val asceningOrderProperties = propertiesWithCriteria(AscendingOrder)
-    lazy val descendingOrderProperties = propertiesWithCriteria(DescendingOrder)
-    lazy val orderProperties = asceningOrderProperties ++ descendingOrderProperties
-    
+    val asceningOrderProperties = propertiesWithCriteria(AscendingOrder)
+    val descendingOrderProperties = propertiesWithCriteria(DescendingOrder)
+    val orderProperties = asceningOrderProperties ++ descendingOrderProperties
+    val nonFilteredOrderedProperties = orderProperties.diff(filterProperties).reverse
+
     Validator.singleInequalityProperty(inequalityFilters)
     Validator.validInequalityFilterSortOrder(parts, orderProperties)
 
@@ -241,7 +242,8 @@ class QueryBuilderMacros(val c: whitebox.Context) extends MacroHelpers {
     val idxDefType = if(needsComplexIndex) tq"_root_.mutatus.Schema.IndexType.Complex"
       else tq"_root_.mutatus.Schema.IndexType.Simple"
 
-    parts.tail.foldLeft[c.Tree](idxDefType){
+    (equalityFilters ::: inequalityFilters ::: nonFilteredOrderedProperties)
+      .foldLeft[c.Tree](idxDefType){
         case (lhs, rhs) => tq"$lhs with $rhs"
     }
   }
