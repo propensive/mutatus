@@ -5,6 +5,7 @@ import scala.reflect.macros._
 import mutatus.utils.BinaryTree
 import mutatus.utils.BinaryTree._
 import mutatus.utils.MacroHelpers
+import java.io.FileWriter
 
 class QueryBuilderMacros(val c: whitebox.Context) extends MacroHelpers {
   import c.universe._
@@ -202,6 +203,68 @@ class QueryBuilderMacros(val c: whitebox.Context) extends MacroHelpers {
     }"""
   }
   
+  /**
+   * Macro used run query with validation that schema contains index definition which contains properties in correct order without redundancy. 
+   * Such validations are needed to unsure that query may be executed by Datastore
+   * 
+   * This method is suboptimal, envolves large amount of string checking. I've not found good method to check Schema type (based on RefinedType) with IndexDef TypeTrees 
+   */
+  def runImpl[T: c.WeakTypeTag]()(
+      svc: c.Tree,
+      namespace: c.Tree,
+      decoder: c.Tree,
+      ev: c.Tree
+  ): c.Tree = {
+    val entityType = c.weakTypeOf[T]
+    val indexPrefix = s"mutatus.Schema.Index[$entityType"
+
+    val properties = compoundTypeParents(simplifyIndexDef(idxDef))
+      .collect {
+        case tq"_root_.mutatus.Schema.Property[$path, $order]" => path -> order.tpe
+      }
+
+    val expectedProperties = properties.collect {
+      case (path, order) => s"""mutatus.Schema.Property[String($path),$order]"""
+    }
+
+    val existsValidIndex = ev.tpe.exists { tpe =>
+      val str = show(tpe)
+      def appliesTo = str.startsWith(indexPrefix)
+
+      lazy val idxDef = str.drop(indexPrefix.length())
+      lazy val idxProperites = idxDef.split("with").tail
+      
+      def hasEqualNumberOfProperties = expectedProperties.size == idxProperites.size
+      def containsSingleDef = !idxDef.contains("mutatus.Schema.Index[")
+      def matchesAllProperties =
+        expectedProperties
+          .zip(idxProperites)
+          .forall {
+            case (idxProperty, schemaProperty) => schemaProperty.contains(idxProperty)
+          }
+
+          appliesTo && containsSingleDef && hasEqualNumberOfProperties && matchesAllProperties
+    }
+
+    if (existsValidIndex) {
+      q"""{
+        val current = $self
+        current.runUnsafe()
+      }"""
+    } else{
+      val expectedIdx = properties.map{
+        case (path, direction) if direction.toString.contains("Ascedning") => s"$path ASC"
+        case (path, _) => s"$path DESC"
+      }.mkString(", ")
+
+      c.abort(
+        c.enclosingPosition,
+         s"""mutatus: Schema does not contain valid index. Order or number of defined index properties may not satisfy Datastore query.   
+             | - kind: $entityType,
+             | - properties: $expectedIdx""".stripMargin)
+    } 
+  }
+
   /** Builds IndexDefinition based on included parts. Validates query and resolves does it need Complex or Simple Index
    * Complex Query cases:
    * - Queries with ancestor and inequality filters (TODO)

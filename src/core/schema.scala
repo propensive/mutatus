@@ -12,10 +12,12 @@ import scala.concurrent.duration._
 import scala.annotation.tailrec
 import org.typelevel.jawn.ast.JString
 import Mutatus._
+import scala.language.experimental.macros
 
 /** Contains type defininitions of all Entity indexes */
 sealed trait Schema[+T <: Schema.Index[_, _]]
 object Schema {
+  sealed trait Contains[+U <: Schema.Index[_,_]]
   implicit def simpleIndexSchema[T]: Schema[Index[T, IndexType.Simple]] = new Schema[Index[T, IndexType.Simple]] {}
 
   /** Base type for each Index Property definition.
@@ -64,6 +66,7 @@ case class SchemaDef[+T <: Schema.Index[_, _]](indexes: SchemaDef.IndexDef[_]*) 
   type IdxList = List[SchemaDef.IndexDef[_]]
 
   def using[R](fn: Schema[T] => Result[R])(implicit service: Service): Result[R] = using(waitReady = false)(fn)
+  //TODO using nie powinno tworzyć  indeksów 
   def using[R](waitReady: Boolean = true, timeout: FiniteDuration = 5.minute)(fn: Schema[T] => Result[R])(implicit service: Service):Result[R] = for {
       existingIndexes <- fetchIndices()
       missing = indexes.filterNot(_.matchesOneOf(existingIndexes)).toList

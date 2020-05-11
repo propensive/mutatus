@@ -26,6 +26,10 @@ case class SomeOtherEntity(foo: Int, bar: String)
 
   val schema = SchemaDef(
     Index[QueringTestEntity](
+      Asc(_.intParam),
+      Desc(_.innerClass.intParam),
+    ),
+    Index[QueringTestEntity](
       Desc(_.intParam),
       Asc(_.innerClass.intParam)
     ),
@@ -40,19 +44,23 @@ case class SomeOtherEntity(foo: Int, bar: String)
     )
   )
 
-  schema.using{ implicit schema =>
+  val x = schema.using(waitReady = true){ implicit schema =>
     Dao[QueringTestEntity].all
     .filter(_.intParam == 0)
     .filter(_.innerClass.intParam < 102)
     .filter(_.innerClass.intParam > 2)
     // .filter(_.intParam >= 1) // It would not compile if uncommented, due to query validations. It's correct behavior as there can be only 1 property with inequality filter
+    // .sortBy(_.innerClass.optionalParam)
     .sortBy(_.intParam)
+    // .sortBy(_.innerClass.decimalParam)
     .reverse
     .sortBy(_.innerClass.intParam)
     .reverse  // Would result in `order by innerClass.intParam DESC, intParam ASC`
     // .sortBy(_.innerClass.decimalParam) //If uncommented this line should not compile, since inequality proporty is not first (or last in tems of this DSL) sort order criteria
     .run()
+
   }
+  println(x)
 
   List(
     builder.filter(_.intParam == 0) -> PropertyFilter.eq("intParam", 0),

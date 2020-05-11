@@ -40,32 +40,44 @@ class QueryBuilder[T: WeakTypeTag](
   def slice(offset: Int, limit: Int): QueryBuilder[T] = macro QueryBuilderMacros.sliceImpl[T]
 
   /** Materializes query and returns Stream of entities for GCP Storage */
-  def run()(
+  def runUnsafe()(
       implicit svc: Service = Service.default,
       namespace: Namespace,
       decoder: Decoder[T],
       ev: Schema[Idx]
   ): Result[Stream[Result[T]]] = {
     val baseQuery = namespace.option.foldLeft(
-      datastore.Query.newEntityQueryBuilder().setKind(kind)
-    )(_.setNamespace(_))
-    val filtered = query.filterCriteria.foldLeft(baseQuery)(_.setFilter(_))
-    val ordered = query.orderCriteria.headOption.foldLeft(filtered)(
-      _.setOrderBy(_, query.orderCriteria.tail: _*)
-    )
-    val limited = query.limit.foldLeft(ordered)(_.setLimit(_))
-    val withOffset = query.offset.foldLeft(limited)(_.setOffset(_))
-    val finalQuery = withOffset.build()
+        datastore.Query.newEntityQueryBuilder().setKind(kind)
+      )(_.setNamespace(_))
+      val filtered = query.filterCriteria.foldLeft(baseQuery)(_.setFilter(_))
+      val ordered = query.orderCriteria.headOption.foldLeft(filtered)(
+        _.setOrderBy(_, query.orderCriteria.tail: _*)
+      )
+      val limited = query.limit.foldLeft(ordered)(_.setLimit(_))
+      val withOffset = query.offset.foldLeft(limited)(_.setOffset(_))
+      val finalQuery = withOffset.build()
 
-    for {
-      results <- Result(svc.read.run(finalQuery))
-      entities = new Iterator[Entity] {
-        def next(): Entity = results.next()
+      for {
+        results <- Result(svc.read.run(finalQuery))
+        entities = new Iterator[Entity] {
+          def next(): Entity = results.next()
 
-        def hasNext: Boolean = results.hasNext
-      }.toStream
-    } yield entities.map(decoder.decode)
-  }.extenuate {
-    case exc: DatastoreException => DatabaseException(exc)
-  }
+          def hasNext: Boolean = results.hasNext
+        }.toStream
+      } yield entities.map(decoder.decode)
+    }.extenuate {
+      case exc: DatastoreException => DatabaseException(exc)
+    }
+
+  /**
+   * Materializes query and returns results Stream of entities for GCP Storage 
+   * Run query with validation that schema contains index definition which contains properties in correct order without redundancy. 
+   * Such validations are needed to unsure that query may be executed by Datastore
+   */
+  def run()(
+      implicit svc: Service = Service.default,
+      namespace: Namespace,
+      decoder: Decoder[T],
+      ev: Schema[Idx]
+  ): Result[Stream[Result[T]]] = macro QueryBuilderMacros.runImpl[T]
 }
