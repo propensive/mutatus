@@ -50,9 +50,7 @@ case class SomeOtherEntity(foo: Int, bar: String)
     .filter(_.innerClass.intParam < 102)
     .filter(_.innerClass.intParam > 2)
     // .filter(_.intParam >= 1) // It would not compile if uncommented, due to query validations. It's correct behavior as there can be only 1 property with inequality filter
-    // .sortBy(_.innerClass.optionalParam)
-    .sortBy(_.intParam)
-    // .sortBy(_.innerClass.decimalParam)
+    .sortBy(_.innerClass.decimalParam)
     .reverse
     .sortBy(_.innerClass.intParam)
     .reverse  // Would result in `order by innerClass.intParam DESC, intParam ASC`

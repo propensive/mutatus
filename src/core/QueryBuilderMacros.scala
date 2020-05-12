@@ -220,6 +220,7 @@ class QueryBuilderMacros(val c: whitebox.Context) extends MacroHelpers {
       }
 
     val expectedProperties = properties.collect {
+      case (path, order) if order.=:=(c.typeOf[Schema.OrderDirection]) => s"""mutatus.Schema.Property[String($path),mutatus.Schema.OrderDirection""" //In case if order does not matter
       case (path, order) => s"""mutatus.Schema.Property[String($path),$order]"""
     }
 
@@ -236,7 +237,8 @@ class QueryBuilderMacros(val c: whitebox.Context) extends MacroHelpers {
         expectedProperties
           .zip(idxProperites)
           .forall {
-            case (idxProperty, schemaProperty) => schemaProperty.contains(idxProperty)
+            case (idxProperty, schemaProperty) => 
+            schemaProperty.contains(idxProperty)
           }
 
           appliesTo && containsSingleDef && hasEqualNumberOfProperties && matchesAllProperties
@@ -249,8 +251,9 @@ class QueryBuilderMacros(val c: whitebox.Context) extends MacroHelpers {
       }"""
     } else{
       val expectedIdx = properties.map{
-        case (path, direction) if direction.toString.contains("Ascedning") => s"$path ASC"
-        case (path, _) => s"$path DESC"
+        case (path, direction) if direction.=:=(c.typeOf[Schema.OrderDirection.Ascending.type]) => s"$path ASC"
+        case (path, direction) if direction.=:=(c.typeOf[Schema.OrderDirection.Descending.type]) => s"$path DESC"
+        case (path, _) => s"$path _"
       }.mkString(", ")
 
       c.abort(
