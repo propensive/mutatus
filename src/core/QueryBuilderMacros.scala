@@ -1,11 +1,7 @@
 package mutatus
 
-import scala.annotation.tailrec
 import scala.reflect.macros._
-import mutatus.utils.BinaryTree
-import mutatus.utils.BinaryTree._
 import mutatus.utils.MacroHelpers
-import java.io.FileWriter
 
 class QueryBuilderMacros(val c: whitebox.Context) extends MacroHelpers {
   import c.universe._

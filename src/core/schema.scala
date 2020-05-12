@@ -3,16 +3,12 @@ package mutatus
 import antiphony._
 import euphemism.Json
 import euphemism.Json.{Serializer, Deserializer}
-import scala.reflect.runtime.universe.WeakTypeTag
 import language.experimental.macros
-import adversaria.TypeMetadata
-import com.google.cloud.datastore.DatastoreException
 import mutatus.SchemaDef.IndexState
 import scala.concurrent.duration._
 import scala.annotation.tailrec
 import org.typelevel.jawn.ast.JString
 import Mutatus._
-import scala.language.experimental.macros
 
 /** Contains type defininitions of all Entity indexes */
 sealed trait Schema[+T <: Schema.Index[_, _]]
@@ -65,23 +61,32 @@ object Schema {
 case class SchemaDef[+T <: Schema.Index[_, _]](indexes: SchemaDef.IndexDef[_]*) {
   type IdxList = List[SchemaDef.IndexDef[_]]
 
-  def using[R](fn: Schema[T] => Result[R])(implicit service: Service): Result[R] = using(waitReady = false)(fn)
-  //TODO using nie powinno tworzyć  indeksów 
-  def using[R](waitReady: Boolean = true, timeout: FiniteDuration = 5.minute)(fn: Schema[T] => Result[R])(implicit service: Service):Result[R] = for {
+  /** Provides proof in form of `implicit Schema` that Datastore contains all indices defined in SchemaDef which means all queries defineded in fn block will be satisfied.  
+   *  This is method does not create missing indices and does not wait until all indices are ready,
+   *  in order to achive such behaviour use curried version of this method `SchemaDef.using(createMissing, waitReady, timeout)(fn)`
+  */
+  def using[R](fn: Schema[T] => Result[R])(implicit service: Service): Result[R] = using(createMissing = false, waitReady = false)(fn)
+  
+  /**
+    * Provides proof in form of `implicit Schema` that Datastore contains all indices defined in SchemaDef which means all queries defineded in fn block will be satisfied.  
+    * @param createMissing If some indexes are missing in Datastore create them using REST API
+    * @param waitReady Wait until all indices state is ready
+    * @param timeout Maximal time to wait for indices to change it's state to Ready
+    */
+  def using[R](createMissing: Boolean = true, waitReady: Boolean = true, timeout: FiniteDuration = 5.minute)(fn: Schema[T] => Result[R])(implicit service: Service):Result[R] = for {
       existingIndexes <- fetchIndices()
       missing = indexes.filterNot(_.matchesOneOf(existingIndexes)).toList
       notReady = existingIndexes
         .filterNot(_.state == IndexState.Ready)
         .filter(_.matchesOneOf(indexes))
-      created <- createIndexes(missing)
+      created <- createIndexesIfNeeded(missing, createMissing)
       _ <- waitIndexesReadyIfNeeded(waitReady, timeout, notReady.toList ++ created)
-      schema = new Schema[T] {}
-      result <- fn(schema)
+      result <- usingUnsafe(fn)
     } yield result
 
   private[mutatus] def usingUnsafe[R](fn: Schema[T] => Result[R])(implicit service: Service):Result[R] = fn(new Schema[T] {})
 
-  private def createIndexes(indexes: IdxList)(implicit service: Service): Result[IdxList] = {
+  private def createIndexesIfNeeded(indexes: IdxList, createMissing: Boolean = true)(implicit service: Service): Result[IdxList] = {
     def iter(indexes: IdxList, finished: IdxList): Result[IdxList] = {
       indexes match {
         case Nil => Answer(finished)
@@ -91,16 +96,15 @@ case class SchemaDef[+T <: Schema.Index[_, _]](indexes: SchemaDef.IndexDef[_]*) 
         }
       }
     }
-    iter(indexes, Nil)
+    if(createMissing && indexes.nonEmpty)  iter(indexes, Nil)
+    else Result(Nil)
   }
-  import Mutatus._
+
   private def fetchIndices()(implicit service: Service): Mutatus.Result[Set[SchemaDef.IndexDef[_]]] =
     for {
       response <- Http.get(
           url = s"https://datastore.googleapis.com/v1/projects/${service.options.getProjectId()}/indexes",
-          headers = Set(
-            HttpHeader("Authorization", s"Bearer ${service.accessToken.getTokenValue()}")
-          )
+          headers = service.authorization
         ).adapt[Mutatus.type]
       json <- Json.parse(new String(response)).adapt[Mutatus.type]
       indexes <- json.indexes.as[List[SchemaDef.IndexDef[Any]]].adapt[Mutatus.type]
@@ -157,9 +161,7 @@ object SchemaDef {
               |}""".stripMargin
           }
           .adapt[Mutatus.type]
-        headers = Set(
-          HttpHeader("Authorization", s"Bearer ${service.accessToken.getTokenValue()}")
-        )
+        headers = service.authorization
         response <- Http
           .post(s"https://datastore.googleapis.com/v1/projects/${service.options.getProjectId()}/indexes", content, headers)
           .adapt[Mutatus.type]
@@ -169,9 +171,6 @@ object SchemaDef {
     }
 
     def delete()(implicit service: Service): Result[Unit] = {
-      val headers = Set(
-        HttpHeader("Authorization", s"Bearer ${service.accessToken.getTokenValue()}")
-      )
       if (indexId.isEmpty) {
         Error(SerializationException("Cannot delete index without indexId"))
       } else {
@@ -181,7 +180,7 @@ object SchemaDef {
               url = s"https://datastore.googleapis.com/v1/projects/${service.options.getProjectId()}/indexes/${indexId.get}",
               content = "{}",
               method = "DELETE",
-              headers = headers
+              headers = service.authorization
             )
             .adapt[Mutatus.type]
           result = println(new String(response))

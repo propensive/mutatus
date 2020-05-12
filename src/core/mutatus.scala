@@ -18,6 +18,7 @@ import adversaria._
 import com.google.cloud.datastore._
 import magnolia._
 import mercator._
+import antiphony.HttpHeader
 
 import scala.annotation.StaticAnnotation
 import scala.collection.JavaConverters._
@@ -28,6 +29,7 @@ import io.opencensus.trace.Status.CanonicalCode
 import com.google.rpc.Code
 import com.google.auth.oauth2.{ServiceAccountCredentials, AccessToken}
 import Mutatus._
+import com.google.cloud.NoCredentials
 
 /** Mutatus package object */
 object `package` {
@@ -186,12 +188,17 @@ case class Geo(lat: Double, lng: Double) {
 case class Service(readWrite: Datastore) {
   val read: DatastoreReader = readWrite
   val options = readWrite.getOptions()
-  def accessToken: AccessToken = {
-    val credentials = options.getCredentials() match {
-      case credentials: ServiceAccountCredentials => credentials.createScoped("https://www.googleapis.com/auth/datastore")
+  def accessToken: Option[AccessToken] = for {
+   credentials <- options.getCredentials() match {
+      case credentials: ServiceAccountCredentials => Some(credentials.createScoped("https://www.googleapis.com/auth/datastore"))
+      case credentials: NoCredentials => None
     }
-    Option(credentials.getAccessToken()).getOrElse(credentials.refreshAccessToken())
-  }
+    accessToken <- Option(credentials.getAccessToken()).orElse(Option(credentials.refreshAccessToken()))
+  } yield accessToken
+
+  def authorization: Set[HttpHeader] = accessToken.map{
+      token => HttpHeader("Authorization", s"Bearer ${token.getTokenValue()}")
+  }.toSet
 }
 
 object Service {

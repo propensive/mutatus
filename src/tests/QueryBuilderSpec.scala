@@ -44,7 +44,7 @@ case class SomeOtherEntity(foo: Int, bar: String)
     )
   )
 
-  val x = schema.using(waitReady = true){ implicit schema =>
+  val x = schema.using{ implicit schema =>
     Dao[QueringTestEntity].all
     .filter(_.intParam == 0)
     .filter(_.innerClass.intParam < 102)
