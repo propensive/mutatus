@@ -28,3 +28,4 @@ case class InvalidIndexDefinition(index: SchemaDef.IndexDef[_])
 case object IndexCreationTimeout extends MutatusException(s"Timeout for index creation exceeded")
 
 case object Unathorized extends MutatusException("Provided credentials were not sufficient to perform Datastore operation")
+case class  InactiveTransactionException(tx: com.google.cloud.datastore.Transaction) extends MutatusException(s"Transaction ${tx.getTransactionId()} was already commited or timeout out")

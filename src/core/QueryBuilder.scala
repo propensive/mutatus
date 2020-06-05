@@ -41,7 +41,7 @@ class QueryBuilder[T: WeakTypeTag](
 
   /** Materializes query and returns Stream of entities for GCP Storage */
   def runUnsafe()(
-      implicit svc: Service = Service.default,
+      implicit ctx: Context with Context.ReadApi,
       namespace: Namespace,
       decoder: Decoder[T],
       ev: Schema[Idx]
@@ -58,7 +58,7 @@ class QueryBuilder[T: WeakTypeTag](
       val finalQuery = withOffset.build()
 
       for {
-        results <- Result(svc.read.run(finalQuery))
+        results <- Result(ctx.read.run(finalQuery))
         entities = new Iterator[Entity] {
           def next(): Entity = results.next()
 
