@@ -1,6 +1,10 @@
 package mutatus
 
 import quarantine.Domain
+import euphemism.DeserializationException
+import euphemism.IndexNotFound
+import euphemism.LabelNotFound
+import euphemism.UnexpectedType
 
 object Mutatus extends Domain[MutatusException] {
   implicit val mitigateHttp = antiphony.Http.mitigate(Mutatus) {
@@ -9,11 +13,14 @@ object Mutatus extends Domain[MutatusException] {
   }
 
   implicit val mitigateEuphenismParser = euphemism.ParseException.mitigate(Mutatus) {
-    case ex: euphemism.ParseException => SerializationException(ex.message)
+    case ex: euphemism.ParseException => SerializationException(s"Failed to parse json @ ${ex.line}/${ex.column} - ${ex.message}")
   }
 
   implicit val mitigateEuphenismAccess = euphemism.Access.mitigate(Mutatus) {
-    case ex => SerializationException(ex.getMessage())
+    case e @ DeserializationException() => SerializationException(s"Failed to deserialize json, ${e.getMessage()}")
+    case IndexNotFound(index) => SerializationException(s"Failed to find index $index")
+    case LabelNotFound(label) => SerializationException(s"Failed to find label $label")
+    case UnexpectedType(expectedType) => SerializationException(s"Unexpected type, expected $expectedType")
   }
 }
 
