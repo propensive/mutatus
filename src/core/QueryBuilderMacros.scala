@@ -206,7 +206,7 @@ class QueryBuilderMacros(val c: whitebox.Context) extends MacroHelpers {
    * This method is suboptimal, envolves large amount of string checking. I've not found good method to check Schema type (based on RefinedType) with IndexDef TypeTrees 
    */
   def runImpl[T: c.WeakTypeTag]()(
-      svc: c.Tree,
+      ctx: c.Tree,
       namespace: c.Tree,
       decoder: c.Tree,
       ev: c.Tree

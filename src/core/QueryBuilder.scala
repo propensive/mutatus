@@ -75,7 +75,7 @@ class QueryBuilder[T: WeakTypeTag](
    * Such validations are needed to unsure that query may be executed by Datastore
    */
   def run()(
-      implicit svc: Service = Service.default,
+      implicit ctx: Context with Context.ReadApi,
       namespace: Namespace,
       decoder: Decoder[T],
       ev: Schema[Idx]

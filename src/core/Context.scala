@@ -12,10 +12,12 @@ object Context {
 
   sealed trait ReadApi {
     self: Context =>
+    def service: Service
     val read: DatastoreReader
   }
   sealed trait WriteApi {
     self: Context =>
+    def service: Service
     val write: DatastoreWriter
     def saveAll(entities: Traversable[FullEntity[_]]): Result[Unit]
     def deleteAll(keys: Traversable[Key]): Result[Unit]
