@@ -12,7 +12,10 @@ class IndexesMacros(val c: whitebox.Context) extends MacroHelpers {
 
     val indexesCriteria = for {
       index <- indexes
-      q"mutatus.Index.apply[$entityType](..$properties)" = index
+      (entityType, properties) = index match {
+        case q"mutatus.Index.apply[$entityType](..$properties)" => entityType -> properties
+        case q"mutatus.Index.apply[$entityType]()" => entityType -> Nil
+      }
       criterias = for {
         property <- properties
         (selector, order) = property match {
