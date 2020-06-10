@@ -39,26 +39,28 @@ class QueryBuilder[T: WeakTypeTag](
   def drop(offset: Int): QueryBuilder[T] = macro QueryBuilderMacros.dropImpl[T] 
   def slice(offset: Int, limit: Int): QueryBuilder[T] = macro QueryBuilderMacros.sliceImpl[T]
 
+  def build(implicit ctx: Context with Context.ReadApi,
+      namespace: Namespace) = {
+        val baseQuery = namespace.option.foldLeft(
+          datastore.Query.newEntityQueryBuilder().setKind(kind)
+        )(_.setNamespace(_))
+        val filtered = query.filterCriteria.foldLeft(baseQuery)(_.setFilter(_))
+        val ordered = query.orderCriteria.headOption.foldLeft(filtered)(
+          _.setOrderBy(_, query.orderCriteria.tail: _*)
+        )
+        val limited = query.limit.foldLeft(ordered)(_.setLimit(_))
+        val withOffset = query.offset.foldLeft(limited)(_.setOffset(_))
+        withOffset.build()
+      }
+
   /** Materializes query and returns Stream of entities for GCP Storage */
   def runUnsafe()(
       implicit ctx: Context with Context.ReadApi,
       namespace: Namespace,
-      decoder: Decoder[T],
-      ev: Schema[Idx]
+      decoder: Decoder[T]
   ): Result[Stream[Result[T]]] = {
-    val baseQuery = namespace.option.foldLeft(
-        datastore.Query.newEntityQueryBuilder().setKind(kind)
-      )(_.setNamespace(_))
-      val filtered = query.filterCriteria.foldLeft(baseQuery)(_.setFilter(_))
-      val ordered = query.orderCriteria.headOption.foldLeft(filtered)(
-        _.setOrderBy(_, query.orderCriteria.tail: _*)
-      )
-      val limited = query.limit.foldLeft(ordered)(_.setLimit(_))
-      val withOffset = query.offset.foldLeft(limited)(_.setOffset(_))
-      val finalQuery = withOffset.build()
-
       for {
-        results <- Result(ctx.read.run(finalQuery))
+        results <- Result(ctx.read.run(build))
         entities = new Iterator[Entity] {
           def next(): Entity = results.next()
 
