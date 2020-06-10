@@ -189,6 +189,7 @@ case class Service(datastore: Datastore) {
    credentials <- options.getCredentials() match {
       case credentials: ServiceAccountCredentials => Some(credentials.createScoped("https://www.googleapis.com/auth/datastore"))
       case credentials: NoCredentials => None
+      case null => None
     }
     accessToken <- Option(credentials.getAccessToken()).orElse(Option(credentials.refreshAccessToken()))
   } yield accessToken
