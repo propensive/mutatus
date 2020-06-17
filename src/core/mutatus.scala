@@ -31,6 +31,7 @@ import com.google.cloud.NoCredentials
 import scala.reflect.macros.blackbox
 import language.experimental.macros
 import mutatus.domain._
+import scala.tools.nsc.doc.model.Val
 
 /** Mutatus package object */
 object `package` {
@@ -147,6 +148,7 @@ object `package` {
 }
 
 final class id() extends StaticAnnotation
+final class notIndexed() extends StaticAnnotation
 
 /** a reference to another case class instance stored in the GCP Datastore */
 case class Ref[T](ref: Key) {
@@ -209,7 +211,7 @@ object Service {
 
 /** typeclass for encoding a value into a type which can be stored in the GCP Datastore */
 trait Encoder[T] {
-  def encode(value: T): Value[_]
+  def encode(value: T): Value[E] forSome {type E}
   def contraMap[T2](fn: T2 => T): Encoder[T2] = v => encode(fn(v))
 }
 
@@ -310,7 +312,7 @@ case class Dao[T: WeakTypeTag](kind: String)(
     decoder: Decoder[T]
 ) {
 
-  private[mutatus] lazy val keyFactory = {
+  private[mutatus] lazy val   keyFactory = {
     val baseFactory = ctx.service.datastore.newKeyFactory().setKind(kind)
     namespace.option.foldLeft(baseFactory)(_.setNamespace(_))
   }
@@ -585,13 +587,17 @@ object Encoder extends Encoder_1 {
           .to[List]
           .foldLeft(FullEntity.newBuilder()) {
             case (b, param) =>
+              val encodedValue: Value[Any] = param.typeclass.encode(param.dereference(value)).asInstanceOf[Value[Any]]
               b.set(
                 param.label,
-                param.typeclass.encode(param.dereference(value))
+                param.annotations.find(_.isInstanceOf[notIndexed]).foldLeft(encodedValue){
+                  case (v, _) =>  encodedValue.toBuilder
+                  .setExcludeFromIndexes(true).asInstanceOf[ValueBuilder[_,_,_]]
+                  .build.asInstanceOf[Value[Any]] }
               )
           }
           .build()
-      }
+        }
 
   /** chooses the appropriate `Encoder` of a subtype of the sealed trait `T` based on its type */
   def dispatch[T](sealedTrait: SealedTrait[Encoder, T]): Encoder[T] =

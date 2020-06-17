@@ -260,6 +260,18 @@ case class SerializationSpec(implicit runner: Runner) {
       implicitly[Decoder[Complex]].decodeValue(complexEncoded)
     ).assert(_ == Answer(expectedComplex))
   }
+
+  {
+    test("allows to encode field as not indexed") {
+      case class EntityWithNotIndexedFields(foo: Int, bar: String, @notIndexed fooBar: Long)
+      implicitly[Encoder[EntityWithNotIndexedFields]].encode{
+        EntityWithNotIndexedFields(2, "two", 2L)
+      }
+    }.assert{
+      case value: EntityValue =>  value.get().getValue[LongValue]("fooBar").excludeFromIndexes() && 
+        !value.get().getValue[StringValue]("bar").excludeFromIndexes()
+    }
+  }
 }
 
 object SerializationSpec {
