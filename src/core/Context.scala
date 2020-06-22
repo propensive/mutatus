@@ -19,8 +19,8 @@ object Context {
     self: Context =>
     def service: Service
     val write: DatastoreWriter
-    def saveAll(entities: Traversable[FullEntity[_]]): Result[Unit]
-    def deleteAll(keys: Traversable[Key]): Result[Unit]
+    def saveAll(entities: Iterable[FullEntity[_]]): Result[Unit]
+    def deleteAll(keys: Iterable[Key]): Result[Unit]
   }
 
   /**
@@ -32,12 +32,12 @@ object Context {
       with WriteApi {
     val read: DatastoreReader = service.datastore
     val write: DatastoreWriter = service.datastore
-    def deleteAll(keys: Traversable[Key]): Result[Unit] = Result {
+    def deleteAll(keys: Iterable[Key]): Result[Unit] = Result {
       val batch = service.datastore.newBatch()
       batch.delete(keys.toList: _*)
       batch.submit()
     }
-    def saveAll(entities: Traversable[FullEntity[_]]): Result[Unit] = Result {
+    def saveAll(entities: Iterable[FullEntity[_]]): Result[Unit] = Result {
       val batch = service.datastore.newBatch()
       batch.put(entities.toList: _*)
       batch.submit()
@@ -54,9 +54,9 @@ object Context {
     val tx = service.datastore.newTransaction()
     val read: DatastoreReader = tx
     val write: DatastoreWriter = tx
-    def deleteAll(keys: Traversable[Key]): Result[Unit] =
+    def deleteAll(keys: Iterable[Key]): Result[Unit] =
       Result(write.delete(keys.toList: _*))
-    def saveAll(entities: Traversable[FullEntity[_]]): Result[Unit] =
+    def saveAll(entities: Iterable[FullEntity[_]]): Result[Unit] =
       Result(write.put(entities.toList: _*))
   }
 
@@ -69,9 +69,9 @@ object Context {
     val batch = service.datastore.newBatch()
     val write: DatastoreWriter = batch
 
-    def deleteAll(keys: Traversable[Key]): Result[Unit] =
+    def deleteAll(keys: Iterable[Key]): Result[Unit] =
       Result(write.delete(keys.toList: _*))
-    def saveAll(entities: Traversable[FullEntity[_]]): Result[Unit] =
+    def saveAll(entities: Iterable[FullEntity[_]]): Result[Unit] =
       Result(write.put(entities.toList: _*))
   }
 }

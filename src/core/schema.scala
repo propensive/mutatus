@@ -143,7 +143,7 @@ case class SchemaDef[+T <: Schema.Index[_, _]](indexes: SchemaDef.IndexDef[_]*) 
 
 object SchemaDef {
   case class IndexDef[+T](kind: String, properties: List[Property], state: IndexState = IndexState.Ready, indexId: Option[String] = None) {
-    def matchesOneOf(that: Traversable[IndexDef[_]]): Boolean = that.exists(_.matches(this))
+    def matchesOneOf(that: Iterable[IndexDef[_]]): Boolean = that.exists(_.matches(this))
     def matches(that: IndexDef[_]): Boolean = {
       def matchesById = indexId.exists(that.indexId.contains)
       def matchesByDefinition = kind == that.kind && properties == that.properties

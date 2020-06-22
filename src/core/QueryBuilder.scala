@@ -58,15 +58,15 @@ class QueryBuilder[T: WeakTypeTag](
       implicit ctx: Context with Context.ReadApi,
       namespace: Namespace,
       decoder: Decoder[T]
-  ): Result[Stream[Result[T]]] = {
+  ): Result[LazyList[Result[T]]] = {
       for {
         results <- Result(ctx.read.run(build))
         entities = new Iterator[Entity] {
           def next(): Entity = results.next()
 
           def hasNext: Boolean = results.hasNext
-        }.toStream
-      } yield entities.map(decoder.decode)
+        }
+      } yield entities.map(decoder.decode).to(LazyList)
     }.extenuate {
       case exc: DatastoreException => DatabaseException(exc)
     }
@@ -81,5 +81,5 @@ class QueryBuilder[T: WeakTypeTag](
       namespace: Namespace,
       decoder: Decoder[T],
       ev: Schema[Idx]
-  ): Result[Stream[Result[T]]] = macro QueryBuilderMacros.runImpl[T]
+  ): Result[LazyList[Result[T]]] = macro QueryBuilderMacros.runImpl[T]
 }

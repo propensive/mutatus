@@ -30,14 +30,13 @@ import Mutatus._
 import com.google.cloud.NoCredentials
 import scala.reflect.macros.blackbox
 import language.experimental.macros
-import mutatus.domain._
 import scala.tools.nsc.doc.model.Val
 
 /** Mutatus package object */
 object `package` {
   implicit val domain = Mutatus
   /** provides `saveAll` and `deleteAll` methods for collections of case class instances */
-  implicit class DataBatchExt[T <: Product](values: Traversable[T]) {
+  implicit class DataBatchExt[T <: Product](values: Iterable[T]) {
 
     /** saves the all case class as a Datastore entity in batch mode */
     def saveAll()(
@@ -318,7 +317,7 @@ case class Dao[T: WeakTypeTag](kind: String)(
   }
 
   /** returns query builder with empty criteria which fetches all the values of this type stored in the GCP Platform */
-  def all = new QueryBuilder[T](kind, Query()) {
+  def all = new QueryBuilder[T](kind, mutatus.Query()) {
     type IdxDef = mutatus.Schema.IndexType.Simple
     type FullIdxDef = IdxDef
   }
@@ -457,7 +456,7 @@ object Decoder extends Decoder_1 {
     encodedValue => {
       // Naive approach used when fetching entity not indexed by mutatus
       def firstSucess(value: Value[_]): Result[T] = {
-        st.subtypes.toStream
+        st.subtypes
           .map { subtype => subtype.typeclass.decodeValue(value) }
           .collectFirst { case success: Answer[T] @unchecked => success }
           .getOrElse(
@@ -533,17 +532,17 @@ object Decoder extends Decoder_1 {
       }
   }
 
-  implicit def collection[Coll[T] <: Traversable[T], T: Decoder](
-      implicit cbf: CanBuildFrom[Nothing, T, Coll[T]]
+  implicit def collection[Coll[T] <: Iterable[T], T: Decoder](
+      implicit cbf: scala.collection.Factory[T, Coll[T]]
   ): Decoder[Coll[T]] = {
-    case _: NullValue => Answer(List.empty[T].to[Coll])
+    case _: NullValue => Answer(cbf.newBuilder.result())
     case list: ListValue =>
       val decoder = implicitly[Decoder[T]]
       def decodeCollectionFailFast(
           encoded: List[Value[_]],
           decoded: List[T] = Nil
       ): Result[Coll[T]] = encoded match {
-        case Nil => Answer(decoded.reverse.to[Coll])
+        case Nil => Answer(cbf.fromSpecific(decoded.reverse))
         case value :: tail =>
           decoder.decodeValue(value) match {
             case Answer(value) =>
@@ -584,7 +583,7 @@ object Encoder extends Encoder_1 {
     value =>
       EntityValue.of {
         caseClass.parameters
-          .to[List]
+          .toList
           .foldLeft(FullEntity.newBuilder()) {
             case (b, param) =>
               val encodedValue: Value[Any] = param.typeclass.encode(param.dereference(value)).asInstanceOf[Value[Any]]
@@ -638,7 +637,7 @@ object Encoder extends Encoder_1 {
   implicit val geo: Encoder[Geo] = v => LatLngValue.of(v.toLatLng)
 
   implicit def ref[T]: Encoder[Ref[T]] = v => KeyValue.of(v.ref)
-  implicit def collection[Coll[T] <: Traversable[T], T: Encoder]: Encoder[Coll[T]] =
+  implicit def collection[Coll[T] <: Iterable[T], T: Encoder]: Encoder[Coll[T]] =
     coll =>
       ListValue.of {
         coll.toList.map(implicitly[Encoder[T]].encode(_)).asJava
