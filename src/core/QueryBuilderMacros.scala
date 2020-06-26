@@ -25,19 +25,26 @@ class QueryBuilderMacros(val c: blackbox.Context) {
     q"_root_.com.google.cloud.datastore.StructuredQuery.PropertyFilter"
   private val composite =
     q"_root_.com.google.cloud.datastore.StructuredQuery.CompositeFilter.and"
-  private val operationMapping
-      : PartialFunction[c.Tree, (String, Option[c.Tree]) => c.Tree] = {
-    case q"==" | q"equals" => (path, args) => q"$filter.eq($path, ${args.get})"
-    case q"<"              => (path, args) => q"$filter.lt($path, ${args.get})"
-    case q"<="             => (path, args) => q"$filter.le($path, ${args.get})"
-    case q">"              => (path, args) => q"$filter.gt($path, ${args.get})"
-    case q">="             => (path, args) => q"$filter.ge($path, ${args.get})"
+
+  def encodedArg(arg: Option[c.Tree]): c.Tree = {
+    val tpe = c.typecheck(arg.get).tpe
+    val tpeErasure = tpe.erasure
+    val usedTpe = if(tpeErasure != tpe && tpe.typeSymbol == tpeErasure.typeSymbol) tpe.erasure else tpe //Used to handle erasure of Int(1) => Int and also keeping in mind to not erase value classes 
+    q"implicitly[_root_.mutatus.Encoder[$usedTpe]].encode(${arg.get})"
+  }
+  
+  private val operationMapping: PartialFunction[c.Tree, (String, Option[c.Tree]) => c.Tree] = {
+    case q"==" | q"equals" => (path, args) => q"$filter.eq($path, ${encodedArg(args)})"
+    case q"<"              => (path, args) => q"$filter.lt($path, ${encodedArg(args)})"
+    case q"<="             => (path, args) => q"$filter.le($path, ${encodedArg(args)})"
+    case q">"              => (path, args) => q"$filter.gt($path, ${encodedArg(args)})"
+    case q">="             => (path, args) => q"$filter.ge($path, ${encodedArg(args)})"
     case q"isEmpty"        => (path, args) => q"$filter.isNull($path)"
     case q"isDefined" | q"nonEmpty" =>
       (path, args) =>
         q"$filter.gt($path, _root_.com.google.cloud.datastore.NullValue.of())"
     case q"contains" | q"foreach" =>
-      (path, args) => q"$filter.eq($path, ${args.get})"
+      (path, args) => q"$filter.eq($path, ${encodedArg(args)})"
   }
 
   def filterImpl[T: c.WeakTypeTag](
