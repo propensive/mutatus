@@ -148,7 +148,6 @@ object `package` {
 
 final class id() extends StaticAnnotation
 final class notIndexed() extends StaticAnnotation
-
 /** a reference to another case class instance stored in the GCP Datastore */
 case class Ref[T](ref: Key) {
 
@@ -582,9 +581,9 @@ object Encoder extends Encoder_1 {
   /** combines `Encoder`s for each parameter of the case class `T` into a `Encoder` for `T` */
   def combine[T](caseClass: CaseClass[Encoder, T]): Encoder[T] =
     value =>
-      if(caseClass.isValueClass){
+      if(caseClass.isValueClass) {
         val param = caseClass.parameters.head
-        param.typeclass.encode(param.dereference(value))
+        param.typeclass.encode(param.dereference(value)).asInstanceOf[Value[Any]]
       } else EntityValue.of {
         caseClass.parameters
           .toList
@@ -593,7 +592,10 @@ object Encoder extends Encoder_1 {
               val encodedValue: Value[Any] = param.typeclass.encode(param.dereference(value)).asInstanceOf[Value[Any]]
               b.set(
                 param.label,
-                param.typeclass.encode(param.dereference(value)).asInstanceOf[Value[Any]]
+                param.annotations.find(_.isInstanceOf[notIndexed]).foldLeft(encodedValue){
+                  case (v, _) =>  encodedValue.toBuilder
+                  .setExcludeFromIndexes(true).asInstanceOf[ValueBuilder[_,_,_]]
+                  .build.asInstanceOf[Value[Any]] }
               )
           }
           .build()

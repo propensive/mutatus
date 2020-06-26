@@ -3,6 +3,10 @@ package mutatus
 import com.google.cloud.datastore, datastore._
 import com.google.cloud.datastore, datastore.StructuredQuery.Filter
 import language.experimental.macros
+import scala.collection.immutable.SortedMap
+import com.google.cloud.datastore.StructuredQuery.OrderBy.Direction
+import com.google.cloud.datastore.StructuredQuery.OrderBy
+import com.google.cloud.datastore.{Query => DatastoreQuery}
 import quarantine._
 import scala.reflect.runtime.universe.WeakTypeTag
 import Mutatus._
