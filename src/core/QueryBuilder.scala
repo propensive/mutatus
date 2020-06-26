@@ -6,6 +6,7 @@ import language.experimental.macros
 import scala.collection.immutable.SortedMap
 import com.google.cloud.datastore.StructuredQuery.OrderBy.Direction
 import com.google.cloud.datastore.StructuredQuery.OrderBy
+import com.google.cloud.datastore.{Query => DatastoreQuery}
 import quarantine._
 
 case class QueryBuilder[T] private[mutatus] (
@@ -62,7 +63,7 @@ case class QueryBuilder[T] private[mutatus] (
       decoder: Decoder[T]
   ): mutatus.Result[Stream[mutatus.Result[T]]] = {
     val baseQuery = namespace.option.foldLeft(
-      Query.newEntityQueryBuilder().setKind(kind)
+      DatastoreQuery.newEntityQueryBuilder().setKind(kind)
     )(_.setNamespace(_))
     val filtered = filterCriteria.foldLeft(baseQuery)(_.setFilter(_))
     val ordered = orderCriteria.headOption.foldLeft(filtered)(
