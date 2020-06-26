@@ -331,7 +331,6 @@ object Decoder extends Decoder_1 {
   def combine[T](caseClass: CaseClass[Decoder, T]): Decoder[T] = {
     case entityValue: EntityValue =>
       val entity = entityValue.get()
-
       caseClass.constructMonadic { param =>
         if (entity.contains(param.label)) {
           param.typeclass.decodeValue(entity.getValue(param.label))
@@ -347,7 +346,9 @@ object Decoder extends Decoder_1 {
           }
         }
       }
-  }
+    case value if caseClass.isValueClass=> 
+      caseClass.constructMonadic{ param => param.typeclass.decodeValue(value) }
+    }
 
   /** tries to decode entity based on encoded `_meta.typename` value containing name of class,
     * if such value is missing tries `Decoder`s for each subtype of sealed trait `T` until one doesn't throw an exception
@@ -482,18 +483,21 @@ object Encoder extends Encoder_1 {
   /** combines `Encoder`s for each parameter of the case class `T` into a `Encoder` for `T` */
   def combine[T](caseClass: CaseClass[Encoder, T]): Encoder[T] =
     value =>
-      EntityValue.of {
+      if(caseClass.isValueClass){
+        val param = caseClass.parameters.head
+        param.typeclass.encode(param.dereference(value))
+      } else EntityValue.of {
         caseClass.parameters
-          .to[List]
+          .toList
           .foldLeft(FullEntity.newBuilder()) {
             case (b, param) =>
               b.set(
                 param.label,
-                param.typeclass.encode(param.dereference(value))
+                param.typeclass.encode(param.dereference(value)).asInstanceOf[Value[Any]]
               )
           }
           .build()
-      }
+        }
 
   /** chooses the appropriate `Encoder` of a subtype of the sealed trait `T` based on its type */
   def dispatch[T](sealedTrait: SealedTrait[Encoder, T]): Encoder[T] =
