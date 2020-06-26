@@ -275,17 +275,28 @@ case class SomeOtherEntity(foo: Int, bar: String)
       .reverse
       .sortBy(_.intParam)
   }.assert { query =>
-    query.orderCriteria.foreach(println)
     query.orderCriteria.toList == List(
       OrderBy.asc("intParam"),
       OrderBy.desc("innerClass.deeperOpt.optInner.some3"),
       OrderBy.asc("innerClassOpt.deeper.some2")
     )
   }
+
+  test("build filter with value classes") {
+    val id = EntityId(2)
+    Dao[Entity].all
+    .filter(_.id == id)
+  }.assert { _.filterCriteria.contains{
+      PropertyFilter.eq("id", LongValue.of(2))
+  }
+}
 }
 
 object QueryBuilderSpec {
   object Model {
+    case class EntityId(id: Long) extends AnyVal
+    case class Entity(id: EntityId, value: String)
+
     case class InnerClass3(some3: Int = 3, none: Option[String] = None)
     case class InnerClass2(
         some2: Int = 2,
