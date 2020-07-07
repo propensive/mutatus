@@ -24,7 +24,6 @@ import scala.annotation.StaticAnnotation
 import scala.collection.JavaConverters._
 import scala.collection.generic.CanBuildFrom
 import scala.language.experimental.macros
-import io.opencensus.trace.Status.CanonicalCode
 import com.google.rpc.Code
 
 /** Mutatus package object */
@@ -480,6 +479,17 @@ object Encoder extends Encoder_1 {
   final val metaField = "_meta"
   final val typenameField = "typename"
 
+  private def excludeFromIndex(value: Value[_]): Value[_] = {
+    value match {
+      case coll: ListValue => ListValue.of {
+        coll.toBuilder.get().asScala.map(excludeFromIndex).asJava
+      }
+      case _ => value.toBuilder
+        .setExcludeFromIndexes(true).asInstanceOf[ValueBuilder[_,_,_]]
+        .build.asInstanceOf[Value[Any]]
+    }
+  }
+
   /** combines `Encoder`s for each parameter of the case class `T` into a `Encoder` for `T` */
   def combine[T](caseClass: CaseClass[Encoder, T]): Encoder[T] =
     value =>
@@ -491,13 +501,13 @@ object Encoder extends Encoder_1 {
           .toList
           .foldLeft(FullEntity.newBuilder()) {
             case (b, param) =>
-              val encodedValue: Value[Any] = param.typeclass.encode(param.dereference(value)).asInstanceOf[Value[Any]]
+              val encodedValue = param.typeclass.encode(param.dereference(value))
+              val isNotIndexed = param.annotations.find(_.isInstanceOf[notIndexed])
               b.set(
                 param.label,
-                param.annotations.find(_.isInstanceOf[notIndexed]).foldLeft(encodedValue){
-                  case (v, _) =>  encodedValue.toBuilder
-                  .setExcludeFromIndexes(true).asInstanceOf[ValueBuilder[_,_,_]]
-                  .build.asInstanceOf[Value[Any]] }
+                isNotIndexed.foldLeft[Value[_]](encodedValue) {
+                  case (value, _) => excludeFromIndex(value)
+                }
               )
           }
           .build()
