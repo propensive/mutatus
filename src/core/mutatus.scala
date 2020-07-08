@@ -24,7 +24,6 @@ import scala.annotation.StaticAnnotation
 import scala.collection.JavaConverters._
 import scala.collection.generic.CanBuildFrom
 import scala.language.experimental.macros
-import io.opencensus.trace.Status.CanonicalCode
 import com.google.rpc.Code
 
 /** Mutatus package object */
@@ -149,7 +148,7 @@ object `package` extends Domain[MutatusException] {
 }
 
 final class id() extends StaticAnnotation
-
+final class notIndexed() extends StaticAnnotation
 /** a reference to another case class instance stored in the GCP Datastore */
 case class Ref[T](ref: Key) {
 
@@ -331,7 +330,6 @@ object Decoder extends Decoder_1 {
   def combine[T](caseClass: CaseClass[Decoder, T]): Decoder[T] = {
     case entityValue: EntityValue =>
       val entity = entityValue.get()
-
       caseClass.constructMonadic { param =>
         if (entity.contains(param.label)) {
           param.typeclass.decodeValue(entity.getValue(param.label))
@@ -347,7 +345,9 @@ object Decoder extends Decoder_1 {
           }
         }
       }
-  }
+    case value if caseClass.isValueClass=> 
+      caseClass.constructMonadic{ param => param.typeclass.decodeValue(value) }
+    }
 
   /** tries to decode entity based on encoded `_meta.typename` value containing name of class,
     * if such value is missing tries `Decoder`s for each subtype of sealed trait `T` until one doesn't throw an exception
@@ -479,21 +479,39 @@ object Encoder extends Encoder_1 {
   final val metaField = "_meta"
   final val typenameField = "typename"
 
+  private def excludeFromIndex(value: Value[_]): Value[_] = {
+    value match {
+      case coll: ListValue => ListValue.of {
+        coll.toBuilder.get().asScala.map(excludeFromIndex).asJava
+      }
+      case _ => value.toBuilder
+        .setExcludeFromIndexes(true).asInstanceOf[ValueBuilder[_,_,_]]
+        .build.asInstanceOf[Value[Any]]
+    }
+  }
+
   /** combines `Encoder`s for each parameter of the case class `T` into a `Encoder` for `T` */
   def combine[T](caseClass: CaseClass[Encoder, T]): Encoder[T] =
     value =>
-      EntityValue.of {
+      if(caseClass.isValueClass) {
+        val param = caseClass.parameters.head
+        param.typeclass.encode(param.dereference(value)).asInstanceOf[Value[Any]]
+      } else EntityValue.of {
         caseClass.parameters
-          .to[List]
+          .toList
           .foldLeft(FullEntity.newBuilder()) {
             case (b, param) =>
+              val encodedValue = param.typeclass.encode(param.dereference(value))
+              val isNotIndexed = param.annotations.find(_.isInstanceOf[notIndexed])
               b.set(
                 param.label,
-                param.typeclass.encode(param.dereference(value))
+                isNotIndexed.foldLeft[Value[_]](encodedValue) {
+                  case (value, _) => excludeFromIndex(value)
+                }
               )
           }
           .build()
-      }
+        }
 
   /** chooses the appropriate `Encoder` of a subtype of the sealed trait `T` based on its type */
   def dispatch[T](sealedTrait: SealedTrait[Encoder, T]): Encoder[T] =
