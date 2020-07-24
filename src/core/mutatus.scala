@@ -17,19 +17,23 @@ package mutatus
 import adversaria._
 import com.google.cloud.datastore._
 import magnolia._
-import quarantine._
 import mercator._
+import antiphony.HttpHeader
 
 import scala.annotation.StaticAnnotation
 import scala.collection.JavaConverters._
+import scala.reflect.runtime.universe.WeakTypeTag
 import scala.collection.generic.CanBuildFrom
 import scala.language.experimental.macros
 import io.opencensus.trace.Status.CanonicalCode
 import com.google.rpc.Code
+import com.google.auth.oauth2.{ServiceAccountCredentials, AccessToken}
+import Mutatus._
+import com.google.cloud.NoCredentials
 
 /** Mutatus package object */
-object `package` extends Domain[MutatusException] {
-
+object `package` {
+  implicit val domain = Mutatus
   /** provides `saveAll` and `deleteAll` methods for collections of case class instances */
   implicit class DataBatchExt[T <: Product](values: Traversable[T]) {
 
@@ -39,7 +43,7 @@ object `package` extends Domain[MutatusException] {
         encoder: Encoder[T],
         dao: Dao[T],
         idField: IdField[T]
-    ): mutatus.Result[Map[T, Ref[T]]] = {
+    ): Result[Map[T, Ref[T]]] = {
       val (batch, refs) =
         values.foldLeft(svc.readWrite.newBatch() -> Map.empty[T, Ref[T]]) {
           case ((b, entityRefs), value) =>
@@ -60,7 +64,7 @@ object `package` extends Domain[MutatusException] {
         implicit svc: Service,
         dao: Dao[T],
         idField: IdField[T]
-    ): mutatus.Result[Unit] =
+    ): Result[Unit] =
       Result {
         values
           .foldLeft(svc.readWrite.newBatch()) {
@@ -103,7 +107,7 @@ object `package` extends Domain[MutatusException] {
         encoder: Encoder[T],
         dao: Dao[T],
         idField: IdField[T]
-    ): mutatus.Result[Ref[T]] =
+    ): Result[Ref[T]] =
       Result {
         new Ref[T](
           svc.readWrite.put(buildEntity()).getKey
@@ -117,7 +121,7 @@ object `package` extends Domain[MutatusException] {
         implicit svc: Service,
         dao: Dao[T],
         idField: IdField[T]
-    ): mutatus.Result[Unit] =
+    ): Result[Unit] =
       Result {
         svc.readWrite.delete(
           idField.idKey(idField.key(value)).newKey(dao.keyFactory)
@@ -139,8 +143,8 @@ object `package` extends Domain[MutatusException] {
   ): T =
     if (str.isEmpty) empty else nonEmpty(str)
 
-  implicit val monadicResult: Monadic[mutatus.Result] =
-    new Monadic[mutatus.Result] {
+  implicit val monadicResult: Monadic[Result] =
+    new Monadic[Result] {
       def flatMap[A, B](from: Result[A])(fn: A => Result[B]): Result[B] =
         from.flatMap(fn)
       def map[A, B](from: Result[A])(fn: A => B): Result[B] = from.map(fn)
@@ -182,7 +186,19 @@ case class Geo(lat: Double, lng: Double) {
 
 /** a representation of the GCP Datastore service */
 case class Service(readWrite: Datastore) {
-  def read: DatastoreReader = readWrite
+  val read: DatastoreReader = readWrite
+  val options = readWrite.getOptions()
+  def accessToken: Option[AccessToken] = for {
+   credentials <- options.getCredentials() match {
+      case credentials: ServiceAccountCredentials => Some(credentials.createScoped("https://www.googleapis.com/auth/datastore"))
+      case credentials: NoCredentials => None
+    }
+    accessToken <- Option(credentials.getAccessToken()).orElse(Option(credentials.refreshAccessToken()))
+  } yield accessToken
+
+  def authorization: Set[HttpHeader] = accessToken.map{
+      token => HttpHeader("Authorization", s"Bearer ${token.getTokenValue()}")
+  }.toSet
 }
 
 object Service {
@@ -290,7 +306,7 @@ case class LongId(id: Long) extends IdKey {
 }
 
 /** a data access object for a particular type */
-case class Dao[T](kind: String)(
+case class Dao[T: WeakTypeTag](kind: String)(
     implicit svc: Service,
     namespace: Namespace,
     decoder: Decoder[T]
@@ -302,7 +318,10 @@ case class Dao[T](kind: String)(
   }
 
   /** returns query builder with empty criteria which fetches all the values of this type stored in the GCP Platform */
-  def all: QueryBuilder[T] = QueryBuilder[T](kind)
+  def all = new QueryBuilder[T](kind, Query()) {
+    type IdxDef = mutatus.Schema.IndexType.Simple
+    type FullIdxDef = IdxDef
+  }
 
   def unapply[R](id: R)(implicit idField: IdField[T] {
     type Return = R
@@ -355,7 +374,7 @@ object Decoder extends Decoder_1 {
   def dispatch[T](st: SealedTrait[Decoder, T]): Decoder[T] =
     encodedValue => {
       // Naive approach used when fetching entity not indexed by mutatus
-      def firstSucess(value: Value[_]): mutatus.Result[T] = {
+      def firstSucess(value: Value[_]): Result[T] = {
         st.subtypes.toStream
           .map { subtype => subtype.typeclass.decodeValue(value) }
           .collectFirst { case success: Answer[T] @unchecked => success }
@@ -371,7 +390,7 @@ object Decoder extends Decoder_1 {
       def subtypeForName(
           typeName: String,
           entityValue: Value[_]
-      ): mutatus.Result[T] = {
+      ): Result[T] = {
         st.subtypes
           .collectFirst {
             case subtype if subtype.typeName.short == typeName =>
@@ -387,8 +406,7 @@ object Decoder extends Decoder_1 {
       }
 
       encodedValue match {
-        case entityValue: EntityValue
-            if entityValue.get.contains(Encoder.metaField) =>
+        case entityValue: EntityValue if entityValue.get.contains(Encoder.metaField) =>
           Result(
             entityValue.get
               .getEntity(Encoder.metaField)
@@ -527,16 +545,14 @@ object Encoder extends Encoder_1 {
   implicit val int: Encoder[Int] = v => LongValue.of(v.toLong)
   implicit val short: Encoder[Short] = v => LongValue.of(v.toLong)
   implicit val byte: Encoder[Byte] = v => LongValue.of(v.toLong)
-  implicit val byteArray: Encoder[Array[Byte]] = v =>
-    BlobValue.of(Blob.copyFrom(v))
+  implicit val byteArray: Encoder[Array[Byte]] = v => BlobValue.of(Blob.copyFrom(v))
   implicit val boolean: Encoder[Boolean] = BooleanValue.of
   implicit val double: Encoder[Double] = DoubleValue.of
   implicit val float: Encoder[Float] = v => DoubleValue.of(v.toDouble)
   implicit val geo: Encoder[Geo] = v => LatLngValue.of(v.toLatLng)
 
   implicit def ref[T]: Encoder[Ref[T]] = v => KeyValue.of(v.ref)
-  implicit def collection[Coll[T] <: Traversable[T], T: Encoder]
-      : Encoder[Coll[T]] =
+  implicit def collection[Coll[T] <: Traversable[T], T: Encoder]: Encoder[Coll[T]] =
     coll =>
       ListValue.of {
         coll.toList.map(implicitly[Encoder[T]].encode(_)).asJava
