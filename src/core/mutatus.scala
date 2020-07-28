@@ -30,7 +30,7 @@ import com.google.cloud.NoCredentials
 import scala.reflect.macros.blackbox
 import language.experimental.macros
 import scala.tools.nsc.doc.model.Val
-import scala.jdk.CollectionConverters._
+import scala.collection.JavaConverters._
 
 /** Mutatus package object */
 object `package` {
@@ -533,16 +533,16 @@ object Decoder extends Decoder_1 {
   }
 
   implicit def collection[Coll[T] <: Iterable[T], T: Decoder](
-      implicit cbf: scala.collection.Factory[T, Coll[T]]
+      implicit cbf: scala.collection.generic.CanBuildFrom[List[T], T, Coll[T]]
   ): Decoder[Coll[T]] = {
-    case _: NullValue => Answer(cbf.newBuilder.result())
+    case _: NullValue => Answer(cbf().result())
     case list: ListValue =>
       val decoder = implicitly[Decoder[T]]
       def decodeCollectionFailFast(
           encoded: List[Value[_]],
           decoded: List[T] = Nil
       ): Result[Coll[T]] = encoded match {
-        case Nil => Answer(cbf.fromSpecific(decoded.reverse))
+        case Nil => Answer(cbf(decoded.reverse).result())
         case value :: tail =>
           decoder.decodeValue(value) match {
             case Answer(value) =>
