@@ -42,11 +42,9 @@ object `package` {
 
       new Ref[T](svc.readWrite.put {
         val key = idField.idKey(idField.key(value)).newKey(dao.keyFactory)
-        keyValues
-          .foldLeft(Entity.newBuilder(key)) {
-            case (entity, (key, dsType)) => dsType.set(entity, key)
-          }
-          .build()
+        keyValues.foldLeft(Entity.newBuilder(key)) {
+          case (entity, (key, dsType)) => dsType.set(entity, key)
+        }.build()
       }.getKey)
     }
 
@@ -76,6 +74,13 @@ case class Ref[T](ref: Key) {
 
   /** a `String` version of the key contained by this reference */
   def key: String = ref.getNameOrId.toString
+
+  override def equals(that: Any): Boolean = that match {
+    case that: Ref[_] => that.ref == ref
+    case _            => false
+  }
+
+  override def hashCode: Int = ref.hashCode
 }
 
 /** companion object for `Namespace`, providing a default namespace */
