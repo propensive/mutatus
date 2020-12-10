@@ -48,6 +48,11 @@ object `package` {
       }.getKey)
     }
 
+    def ref()(implicit svc: Service, dao: Dao[T], idField: IdField[T]): Ref[T] = {
+      val key = idField.idKey(idField.key(value)).newKey(dao.keyFactory)
+      new Ref[T](key)
+    }
+
     /** deletes the Datastore entity with this ID */
     def delete()(implicit svc: Service, dao: Dao[T], idField: IdField[T]): Unit =
       svc.readWrite.delete(idField.idKey(idField.key(value)).newKey(dao.keyFactory))
@@ -270,8 +275,10 @@ object Decoder extends Decoder_1 {
   implicit val double: Decoder[Double] = _.getDouble(_)
   implicit val float: Decoder[Float] = _.getDouble(_).toFloat
   implicit val geo: Decoder[Geo] = (obj, name) => Geo(obj.getLatLng(name))
+  
   implicit def ref[T](implicit idField: IdField[T]): Decoder[Ref[T]] =
     (obj, ref) => Ref[T](obj.getKey(ref))
+  
   implicit def collection[Coll[T] <: Traversable[T], T: Decoder](
     implicit cbf: CanBuildFrom[Nothing, T, Coll[T]]
   ): Decoder[Coll[T]] = new Decoder[Coll[T]] {
