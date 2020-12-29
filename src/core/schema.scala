@@ -111,7 +111,7 @@ case class SchemaDef[+T <: Schema.Index[_, _]](indexes: SchemaDef.IndexDef[_]*) 
     } yield indexes.toSet
 
   private def waitIndexesReadyIfNeeded(waitReady:Boolean, timeout: FiniteDuration, checkedIndexes: IdxList): Mutatus.Result[Unit] = if(!waitReady || checkedIndexes.isEmpty){
-      Answer()
+      Answer(())
     }else{
       val start = System.currentTimeMillis()
       println(s"Awaiting for creation of ${checkedIndexes.size} Datastore indexes, max timeout $timeout")
@@ -127,7 +127,7 @@ case class SchemaDef[+T <: Schema.Index[_, _]](indexes: SchemaDef.IndexDef[_]*) 
         
         result match {
           case Answer((_, Some(errIdx))) => Error(InvalidIndexDefinition(errIdx))
-          case Answer((true, _)) => Answer()
+          case Answer((true, _)) => Answer(())
           case Answer((false, _)) => 
               val tookTime = (System.currentTimeMillis - start).millis
               if(tookTime < timeout){
