@@ -33,7 +33,7 @@ object Schema {
   trait Index[Entity, +Properies <: IndexType]
 
   /** Property defines single Index entry for given path P, defined as literal singleton and OrderDirection in which it is indexed inside Datastore  */
-  trait Property[P <: Singleton, +Order <: OrderDirection] { _: IndexDef => }
+  trait Property[P <: Singleton, +Order <: OrderDirection] { _: SchemaDef.IndexDef => }
 
   /** Internal trait used to mark property set to be me the most significent position. Used for internal checks and query validations */
   trait MostSignificentSortOrder
